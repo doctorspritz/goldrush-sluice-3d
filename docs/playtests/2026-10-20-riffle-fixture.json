@@ -1,0 +1,23 @@
+{
+  "fixture_sim_time": 12.016667293384671,
+  "water_particles": 120278,
+  "grain_parcels": 1025,
+  "processed_m3": 0.0012000000000000162,
+  "hopper": {
+    "soil_m3": 0.23090706794579238,
+    "sand_m3": 0.0,
+    "gravel_m3": 0.5770830102270352,
+    "gold_g": 12.278699415421746
+  },
+  "tailings": {
+    "soil_m3": 0.0001411751142082991,
+    "sand_m3": 0.0,
+    "gravel_m3": 0.0002714037583013079,
+    "gold_g": 5.173993268833938e-06
+  },
+  "fluid_substeps": 1440,
+  "fixture_sha256": "74a69efe161ebd23e45474b706f9554740d6f0ddf79d4d9093c19c91fcba8645",
+  "native_simulated_seconds": 9.566667165607214,
+  "native_simulation_wall_ratio": 0.4758058685850768,
+  "note": "Wall interval includes app startup; all reported FPS is rendering, not fluid throughput."
+}

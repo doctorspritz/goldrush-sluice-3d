@@ -1,0 +1,2561 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-21",
+  "base_commit": "81d9bbd7eb12f26767c6eec8fd82cbc06a6c025f",
+  "status": "numerical corrections and experiment framework; external recovery calibration incomplete",
+  "physics_provenance": {
+    "model": "2026-10-21-apic-contacts",
+    "base_commit": "81d9bbd7eb12f26767c6eec8fd82cbc06a6c025f",
+    "binary_sha256": "52260e31f159de6a1f17b1d6091d74571115b37f9c60e90e09935e5c5d559f37",
+    "source_sha256": {
+      "crates/sim3d/src/contact.rs": "e790e465194fb450cd8559992b3a3b5f019ba9f6197c52acab89b8971e510a2d",
+      "crates/sim3d/src/clump.rs": "91d382335f9d951769b4ee65fdd46f97495c507c4ece535b431e61daddc5462a",
+      "crates/mining-sim/src/sluice.rs": "0fe6617a0691e7c1b9cab6d88a8a5f6429c45acb63acfe94d1f57c436d0cfb0c",
+      "crates/game/src/gpu/shaders/g2p_3d.wgsl": "1a9a9df6315fc16972fc6a24b5499572a6a684daed14194388eb6dbdf7ae6d8a",
+      "crates/game/src/gpu/shaders/p2g_scatter_3d.wgsl": "e42e5bc8d8e1eca74f0607b838bf6dcc49dcba3813e0ca2171fa763bbf1dbafd",
+      "crates/game/src/gpu/shaders/sdf_collision_3d.wgsl": "3e57c8eb1891ad604047b046e6f9591cd524ae3dde867350231133d5a3f07ca4",
+      "crates/mining-physics/src/calibration.rs": "0ed725a440b6e24ed9da77c1bf9e72e1eade89f29c7dd9371338203fb80c6074",
+      "crates/mining-physics/examples/sluice_accuracy.rs": "0cd24af2dbb27248322046cff5f3c13e7288382ac7bccb0903fc2c354ef7f153"
+    }
+  },
+  "cleanup_provenance": {
+    "protocol": "settled-mat cleanup only; no additional simulated time; includes single fine-quartz accounting fix",
+    "binary_sha256": "e7589f6719bf1afa4c0fc2830791cf3cce3cd9d9b1a71dfd4365479a51b0930e",
+    "source_sha256": {
+      "crates/mining-sim/src/sluice.rs": "fa3bba73d3a6fde3e9be0aa4be1690d6df37ef91d0503f11e5e3ce973c75aabc",
+      "crates/mining-physics/examples/sluice_accuracy.rs": "57f52cedab7cc2a37185d1f49ea8da57189dec20443bae21e70e2f7a51f483b3"
+    }
+  },
+  "trials": [
+    {
+      "physics_trial": {
+        "bed_loading_seconds": 12,
+        "boundaries": {
+          "grain_centres_over_2mm_inside_solid": 0,
+          "max_grain_surface_penetration_m": 0.0029632453806698322,
+          "water_centres_over_2mm_inside_solid": 0
+        },
+        "case": "low",
+        "cell_m": 0.009999999776482582,
+        "cleanup_allowed": false,
+        "cleanup_error": "Let the material settle before lifting the mats",
+        "clear_flush_seconds": 10,
+        "component": "sluice",
+        "contact_model": "Coulomb",
+        "delivered_feed_m3s": 9.999999999999641e-05,
+        "delivered_water_m3s": 0.001249999986612238,
+        "drain_seconds": 15,
+        "externally_validated_recovery": false,
+        "feed_delivery_fraction": 1.0000000252620895,
+        "fluid_hz": 120,
+        "gold_error_g": 9.094947017729282e-12,
+        "interphase_momentum_verified": false,
+        "limits": [
+          "weighted bulk parcels",
+          "voxel ramp and riffles",
+          "unresolved mat fibres",
+          "no calibrated flake drag",
+          "not matched to an experimental geometry",
+          "24 deterministic lateral positions per size; no statistical confidence claim"
+        ],
+        "mass_and_finite_checks_passed": true,
+        "model_revision": "2026-10-21-apic-contacts",
+        "observations": [
+          {
+            "gold_error_g": 4.547473508864641e-13,
+            "grains": 0,
+            "phase": "warmup",
+            "pocket_reverse_fraction": 0.016379310344827588,
+            "pocket_samples": 10440,
+            "pocket_slow_fraction": 0.3046934865900383,
+            "processed_m3": 0.0,
+            "settled_peak_by_riffle_m": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sim_seconds": 5.000000260770321,
+            "water_downstream_mps": 0.18295006453990936,
+            "water_pumped_m3": 0.00624999993306119,
+            "whole_water_error_m3": -7.459318123181902e-07
+          },
+          {
+            "gold_error_g": 2.7284841053187847e-12,
+            "grains": 250,
+            "phase": "bed_loading",
+            "pocket_reverse_fraction": 0.012747321498396809,
+            "pocket_samples": 12787,
+            "pocket_slow_fraction": 0.3322124032220224,
+            "processed_m3": 0.0004999999999999991,
+            "settled_peak_by_riffle_m": [
+              0.046764153987169266,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              1.8e-05,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sim_seconds": 13.000000678002834,
+            "water_downstream_mps": 0.17295904457569122,
+            "water_pumped_m3": 0.016249999825959094,
+            "whole_water_error_m3": -2.3889472693383595e-06
+          },
+          {
+            "gold_error_g": 6.366462912410498e-12,
+            "grains": 500,
+            "phase": "bed_loading",
+            "pocket_reverse_fraction": 0.031650099403578526,
+            "pocket_samples": 12575,
+            "pocket_slow_fraction": 0.3102186878727634,
+            "processed_m3": 0.0010000000000000113,
+            "settled_peak_by_riffle_m": [
+              0.046451251953840256,
+              0.0408184789121151,
+              0.0,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              8.399999999999995e-05,
+              2e-05,
+              0.0,
+              0.0
+            ],
+            "sim_seconds": 18.000000938773155,
+            "water_downstream_mps": 0.16309070587158203,
+            "water_pumped_m3": 0.022499999759020284,
+            "whole_water_error_m3": -3.906001555975536e-06
+          },
+          {
+            "gold_error_g": 5.9117155615240335e-12,
+            "grains": 1014,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.012060379707438531,
+            "pocket_samples": 12852,
+            "pocket_slow_fraction": 0.3216619981325864,
+            "processed_m3": 0.0017000000000000283,
+            "settled_peak_by_riffle_m": [
+              0.0460088737308979,
+              0.04193032905459404,
+              0.03580951318144798,
+              0.043091993778944016
+            ],
+            "settled_volume_by_riffle_m3": [
+              3.4001257800153046e-05,
+              3.8000086655609726e-05,
+              8.800000203522862e-05,
+              2e-06
+            ],
+            "sim_seconds": 25.000001303851604,
+            "water_downstream_mps": 0.1680556833744049,
+            "water_pumped_m3": 0.03124999966530595,
+            "whole_water_error_m3": -5.2431735966251836e-06
+          },
+          {
+            "gold_error_g": -4.547473508864641e-13,
+            "grains": 1040,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.028881650380021717,
+            "pocket_samples": 13815,
+            "pocket_slow_fraction": 0.29243575823380386,
+            "processed_m3": 0.0022000000000000136,
+            "settled_peak_by_riffle_m": [
+              0.04476677253842354,
+              0.042434435337781906,
+              0.039491113275289536,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              3.400115193003669e-05,
+              5.4000294724367386e-05,
+              4.400000407045736e-05,
+              0.0
+            ],
+            "sim_seconds": 30.000001564621925,
+            "water_downstream_mps": 0.17033813893795013,
+            "water_pumped_m3": 0.03749999959836714,
+            "whole_water_error_m3": -6.260616412845366e-06
+          },
+          {
+            "gold_error_g": 5.4569682106375694e-12,
+            "grains": 1050,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.016565433462175594,
+            "pocket_samples": 12677,
+            "pocket_slow_fraction": 0.30235860219294786,
+            "processed_m3": 0.0026999999999999715,
+            "settled_peak_by_riffle_m": [
+              0.045153554528951645,
+              0.03345708176493645,
+              0.03532842919230461,
+              0.04276325926184654
+            ],
+            "settled_volume_by_riffle_m3": [
+              1.8000586253212036e-05,
+              5.8000353576354434e-05,
+              2.4000015904315077e-05,
+              4e-06
+            ],
+            "sim_seconds": 35.000001825392246,
+            "water_downstream_mps": 0.1687052845954895,
+            "water_pumped_m3": 0.04374999953142833,
+            "whole_water_error_m3": -6.716516026017416e-06
+          },
+          {
+            "gold_error_g": 4.092726157978177e-12,
+            "grains": 1055,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.007463938275746393,
+            "pocket_samples": 11924,
+            "pocket_slow_fraction": 0.33143240523314327,
+            "processed_m3": 0.0031999999999999295,
+            "settled_peak_by_riffle_m": [
+              0.04680655524134636,
+              0.04017171636223793,
+              0.037631478160619736,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              4.400092280893928e-05,
+              5.000027752362142e-05,
+              1.8000005301438356e-05,
+              0.0
+            ],
+            "sim_seconds": 40.00000208616257,
+            "water_downstream_mps": 0.1683550924062729,
+            "water_pumped_m3": 0.04999999946448952,
+            "whole_water_error_m3": -7.552359797102781e-06
+          },
+          {
+            "gold_error_g": 6.821210263296962e-12,
+            "grains": 1067,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.019151533648710514,
+            "pocket_samples": 13106,
+            "pocket_slow_fraction": 0.33000152601861743,
+            "processed_m3": 0.0036999999999998874,
+            "settled_peak_by_riffle_m": [
+              0.0385424830019474,
+              0.04254006966948509,
+              0.038383807986974716,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              1.800057307894155e-05,
+              8.400040200558345e-05,
+              3.2000005301438364e-05,
+              0.0
+            ],
+            "sim_seconds": 45.00000234693289,
+            "water_downstream_mps": 0.16571061313152313,
+            "water_pumped_m3": 0.05624999939755071,
+            "whole_water_error_m3": -8.500804412392426e-06
+          },
+          {
+            "gold_error_g": 9.549694368615746e-12,
+            "grains": 1091,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.013309039055691991,
+            "pocket_samples": 12623,
+            "pocket_slow_fraction": 0.319179275924899,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.048450421541929245,
+              0.040564846247434616,
+              0.0399630032479763,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              4.60008384126589e-05,
+              7.200070630447923e-05,
+              2.4000003534292244e-05,
+              0.0
+            ],
+            "sim_seconds": 50.00000260770321,
+            "water_downstream_mps": 0.16403424739837646,
+            "water_pumped_m3": 0.0624999993306119,
+            "whole_water_error_m3": -9.584320348920983e-06
+          },
+          {
+            "gold_error_g": 5.9117155615240335e-12,
+            "grains": 813,
+            "phase": "clear_water_flush",
+            "pocket_reverse_fraction": 0.03166465621230398,
+            "pocket_samples": 13264,
+            "pocket_slow_fraction": 0.30541314837153194,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.04485085979104042,
+              0.04206794127821922,
+              0.03763226792216301,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              5.8000824275489966e-05,
+              9.600073511498236e-05,
+              5.800000176714614e-05,
+              0.0
+            ],
+            "sim_seconds": 55.00000286847353,
+            "water_downstream_mps": 0.18224918842315674,
+            "water_pumped_m3": 0.06874999926367309,
+            "whole_water_error_m3": -1.057273274795989e-05
+          },
+          {
+            "gold_error_g": 7.275957614183426e-12,
+            "grains": 667,
+            "phase": "clear_water_flush",
+            "pocket_reverse_fraction": 0.01894256371243819,
+            "pocket_samples": 13145,
+            "pocket_slow_fraction": 0.3080258653480411,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.03989841416478157,
+              0.033019136637449265,
+              0.035645511001348495,
+              0.04311354085803032
+            ],
+            "settled_volume_by_riffle_m3": [
+              6.600083841265891e-05,
+              9.400069270347539e-05,
+              6.400000176714613e-05,
+              4e-06
+            ],
+            "sim_seconds": 60.00000312924385,
+            "water_downstream_mps": 0.1822197437286377,
+            "water_pumped_m3": 0.07499999919673428,
+            "whole_water_error_m3": -1.1304725276772842e-05
+          },
+          {
+            "gold_error_g": 4.092726157978177e-12,
+            "grains": 609,
+            "phase": "draining",
+            "pocket_reverse_fraction": 0.018576936558009113,
+            "pocket_samples": 2853,
+            "pocket_slow_fraction": 0.7665615141955836,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.028046797960996628,
+              0.0322485975921154,
+              0.03365228697657585,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              0.0001560001750783653,
+              0.000146000735114982,
+              0.00012600000176714597,
+              0.0
+            ],
+            "sim_seconds": 65.00000339001417,
+            "water_downstream_mps": 0.023531055077910423,
+            "water_pumped_m3": 0.07499999919673428,
+            "whole_water_error_m3": -1.1954562715743577e-05
+          },
+          {
+            "gold_error_g": 3.183231456205249e-12,
+            "grains": 608,
+            "phase": "draining",
+            "pocket_reverse_fraction": 0.06253553155201819,
+            "pocket_samples": 1759,
+            "pocket_slow_fraction": 0.7737350767481523,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.027711261063814163,
+              0.030792441219091415,
+              0.028449278324842453,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              0.00014800082427548976,
+              0.00014600066939704317,
+              0.00014000000176714593,
+              0.0
+            ],
+            "sim_seconds": 70.00000365078449,
+            "water_downstream_mps": 0.005711559671908617,
+            "water_pumped_m3": 0.07499999919673428,
+            "whole_water_error_m3": -1.2693516868722554e-05
+          },
+          {
+            "gold_error_g": 9.094947017729282e-12,
+            "grains": 608,
+            "phase": "draining",
+            "pocket_reverse_fraction": 0.043076923076923075,
+            "pocket_samples": 1625,
+            "pocket_slow_fraction": 0.788923076923077,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.027687449008226395,
+              0.02956753596663475,
+              0.028956856578588486,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              0.00013000036435934973,
+              0.00014400073511498202,
+              0.00014000000176714593,
+              0.0
+            ],
+            "sim_seconds": 75.00000391155481,
+            "water_downstream_mps": -0.0006700843223370612,
+            "water_pumped_m3": 0.07499999919673428,
+            "whole_water_error_m3": -1.32167174271558e-05
+          }
+        ],
+        "parcel_m3": 2e-06,
+        "pressure_iterations": [
+          80,
+          40
+        ],
+        "requested_conditions_achieved": true,
+        "riffles": true,
+        "schema_version": 3,
+        "set_feed_m3s": 9.999999747378752e-05,
+        "set_water_m3s": 0.0012499999720603228,
+        "sim_seconds": 75.00000391155481,
+        "size_assay": [
+          {
+            "actual_cleanup_fraction": null,
+            "cleanup_gold_g": 0.0,
+            "diameter_m": 7.999999797903001e-05,
+            "gold_mass_residual_g": 0.0,
+            "injected_gold_g": 0.00012417583845201447,
+            "outlet_gold_g": 1.034798653766787e-05,
+            "outlet_loss_fraction": 0.08333333333333331,
+            "post_clear_flush_resident_fraction": 0.9166666666666666,
+            "quartz_outlet_fraction": 1.0,
+            "still_resident_gold_g": 0.0001138278519143466,
+            "wash_resident_fraction": 0.9583333333333334
+          },
+          {
+            "actual_cleanup_fraction": null,
+            "cleanup_gold_g": 0.0,
+            "diameter_m": 0.0001500000071246177,
+            "gold_mass_residual_g": 0.0,
+            "injected_gold_g": 0.0008185420825287975,
+            "outlet_gold_g": 0.0,
+            "outlet_loss_fraction": 0.0,
+            "post_clear_flush_resident_fraction": 1.0,
+            "quartz_outlet_fraction": 1.0,
+            "still_resident_gold_g": 0.0008185420825287975,
+            "wash_resident_fraction": 1.0
+          },
+          {
+            "actual_cleanup_fraction": null,
+            "cleanup_gold_g": 0.0,
+            "diameter_m": 0.0003000000142492354,
+            "gold_mass_residual_g": 0.0,
+            "injected_gold_g": 0.00654833666023038,
+            "outlet_gold_g": 0.0,
+            "outlet_loss_fraction": 0.0,
+            "post_clear_flush_resident_fraction": 1.0,
+            "quartz_outlet_fraction": 0.1250000000000001,
+            "still_resident_gold_g": 0.00654833666023038,
+            "wash_resident_fraction": 1.0
+          },
+          {
+            "actual_cleanup_fraction": null,
+            "cleanup_gold_g": 0.0,
+            "diameter_m": 0.0005000000237487257,
+            "gold_mass_residual_g": 0.0,
+            "injected_gold_g": 0.030316373426992484,
+            "outlet_gold_g": 0.0,
+            "outlet_loss_fraction": 0.0,
+            "post_clear_flush_resident_fraction": 1.0,
+            "quartz_outlet_fraction": 0.0,
+            "still_resident_gold_g": 0.030316373426992484,
+            "wash_resident_fraction": 1.0
+          }
+        ],
+        "slope_deg": 9.833564758300781,
+        "tracer_seconds": 30.0,
+        "tracers_per_size": 24,
+        "wall_seconds": 63.974211792,
+        "warmup_seconds": 8,
+        "water_delivery_fraction": 1.0000000116415324,
+        "whole_water_error_m3": -1.32167174271558e-05
+      },
+      "cleanup_reassessment": {
+        "cleanup_allowed": true,
+        "cleanup_error": null,
+        "collected_gold_by_size_g": [
+          9.313187883901084e-05,
+          0.00027284736084293246,
+          0.00027284736084293246,
+          0.0012631822261246865
+        ],
+        "diameters_m": [
+          7.999999797903001e-05,
+          0.0001500000071246177,
+          0.0003000000142492354,
+          0.0005000000237487257
+        ],
+        "gold_error_g": 6.366462912410498e-12,
+        "protocol": "settled_mat_fraction",
+        "resident_after": {
+          "diameters_m": [
+            7.999999797903001e-05,
+            0.0001500000071246177,
+            0.0003000000142492354,
+            0.0005000000237487257
+          ],
+          "gold_g": [
+            2.0695973075335753e-05,
+            0.000545694721685865,
+            0.0062754892993874475,
+            0.029053191200867797
+          ],
+          "quartz_m3": [
+            0.0,
+            0.0,
+            1.4137168955592358e-11,
+            8.508481315865768e-10
+          ],
+          "resident_gold_count": [
+            4,
+            16,
+            23,
+            23
+          ]
+        },
+        "resident_before": {
+          "diameters_m": [
+            7.999999797903001e-05,
+            0.0001500000071246177,
+            0.0003000000142492354,
+            0.0005000000237487257
+          ],
+          "gold_g": [
+            0.0001138278519143466,
+            0.0008185420825287975,
+            0.00654833666023038,
+            0.030316373426992484
+          ],
+          "quartz_m3": [
+            0.0,
+            0.0,
+            2.968805480674395e-10,
+            1.5707965506213735e-09
+          ],
+          "resident_gold_count": [
+            22,
+            24,
+            24,
+            24
+          ]
+        },
+        "sim_seconds": 75.00000391155481,
+        "source_save": "matrix-v3/low.save.json",
+        "water_error_m3": -1.32167174271558e-05,
+        "additional_simulated_seconds": 0,
+        "fraction_of_injected_gold": [
+          0.75,
+          0.3333333333333333,
+          0.041666666666666664,
+          0.04166666666666666
+        ]
+      }
+    },
+    {
+      "physics_trial": {
+        "bed_loading_seconds": 12,
+        "boundaries": {
+          "grain_centres_over_2mm_inside_solid": 0,
+          "max_grain_surface_penetration_m": 0.00033359136432409286,
+          "water_centres_over_2mm_inside_solid": 0
+        },
+        "case": "nominal",
+        "cell_m": 0.009999999776482582,
+        "cleanup_allowed": false,
+        "cleanup_error": "Let the material settle before lifting the mats",
+        "clear_flush_seconds": 10,
+        "component": "sluice",
+        "contact_model": "Coulomb",
+        "delivered_feed_m3s": 9.999999999999641e-05,
+        "delivered_water_m3s": 0.0037500001781154424,
+        "drain_seconds": 15,
+        "externally_validated_recovery": false,
+        "feed_delivery_fraction": 1.0000000252620895,
+        "fluid_hz": 120,
+        "gold_error_g": 4.547473508864641e-12,
+        "interphase_momentum_verified": false,
+        "limits": [
+          "weighted bulk parcels",
+          "voxel ramp and riffles",
+          "unresolved mat fibres",
+          "no calibrated flake drag",
+          "not matched to an experimental geometry",
+          "24 deterministic lateral positions per size; no statistical confidence claim"
+        ],
+        "mass_and_finite_checks_passed": true,
+        "model_revision": "2026-10-21-apic-contacts",
+        "observations": [
+          {
+            "gold_error_g": -4.547473508864641e-13,
+            "grains": 0,
+            "phase": "warmup",
+            "pocket_reverse_fraction": 0.1010295504558315,
+            "pocket_samples": 25448,
+            "pocket_slow_fraction": 0.24980352090537566,
+            "processed_m3": 0.0,
+            "settled_peak_by_riffle_m": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sim_seconds": 5.000000260770321,
+            "water_downstream_mps": 0.39856258034706116,
+            "water_pumped_m3": 0.018750000890577212,
+            "whole_water_error_m3": -6.766078808340126e-07
+          },
+          {
+            "gold_error_g": 7.275957614183426e-12,
+            "grains": 239,
+            "phase": "bed_loading",
+            "pocket_reverse_fraction": 0.1098111577872875,
+            "pocket_samples": 25471,
+            "pocket_slow_fraction": 0.2583330061638726,
+            "processed_m3": 0.0004999999999999991,
+            "settled_peak_by_riffle_m": [
+              0.027321163564920425,
+              0.0,
+              0.026166241616010666,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              1.6e-05,
+              0.0,
+              8e-06,
+              0.0
+            ],
+            "sim_seconds": 13.000000678002834,
+            "water_downstream_mps": 0.40293359756469727,
+            "water_pumped_m3": 0.04875000231550075,
+            "whole_water_error_m3": -2.1957473119726956e-06
+          },
+          {
+            "gold_error_g": -1.3642420526593924e-12,
+            "grains": 273,
+            "phase": "bed_loading",
+            "pocket_reverse_fraction": 0.11023190222500784,
+            "pocket_samples": 25528,
+            "pocket_slow_fraction": 0.2835709808837355,
+            "processed_m3": 0.0010000000000000113,
+            "settled_peak_by_riffle_m": [
+              0.03132570907473564,
+              0.0,
+              0.02761026844382286,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              1.3999999999999998e-05,
+              0.0,
+              2.2000000000000003e-05,
+              0.0
+            ],
+            "sim_seconds": 18.000000938773155,
+            "water_downstream_mps": 0.3958650529384613,
+            "water_pumped_m3": 0.06750000320607796,
+            "whole_water_error_m3": -3.185314596976241e-06
+          },
+          {
+            "gold_error_g": 2.7284841053187847e-12,
+            "grains": 418,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.10122498979175173,
+            "pocket_samples": 24490,
+            "pocket_slow_fraction": 0.27239689669252753,
+            "processed_m3": 0.0017000000000000283,
+            "settled_peak_by_riffle_m": [
+              0.02880008891224861,
+              0.02035079523921013,
+              0.020902257412672043,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              1.0001331615024707e-05,
+              2.0005768158664857e-06,
+              2.0000061155298268e-05,
+              0.0
+            ],
+            "sim_seconds": 25.000001303851604,
+            "water_downstream_mps": 0.4017966091632843,
+            "water_pumped_m3": 0.09375000445288606,
+            "whole_water_error_m3": -4.027281086393941e-06
+          },
+          {
+            "gold_error_g": 2.7284841053187847e-12,
+            "grains": 411,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.12506915356042045,
+            "pocket_samples": 25306,
+            "pocket_slow_fraction": 0.26890855923496404,
+            "processed_m3": 0.0022000000000000136,
+            "settled_peak_by_riffle_m": [
+              0.028410080820322037,
+              0.0040190997533500195,
+              0.019089829176664352,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              1.600208813734711e-05,
+              7.466582435230451e-10,
+              2.200019563328495e-05,
+              0.0
+            ],
+            "sim_seconds": 30.000001564621925,
+            "water_downstream_mps": 0.39789146184921265,
+            "water_pumped_m3": 0.11250000534346327,
+            "whole_water_error_m3": -4.722235416920739e-06
+          },
+          {
+            "gold_error_g": 1.8189894035458565e-12,
+            "grains": 409,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.1072870526439575,
+            "pocket_samples": 25511,
+            "pocket_slow_fraction": 0.2815256164007683,
+            "processed_m3": 0.0026999999999999715,
+            "settled_peak_by_riffle_m": [
+              0.012728576548397541,
+              0.0034484448842704296,
+              0.023726608604192734,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              2.001703803224827e-06,
+              7.552913414237767e-10,
+              2.2000126019770397e-05,
+              0.0
+            ],
+            "sim_seconds": 35.000001825392246,
+            "water_downstream_mps": 0.3975573778152466,
+            "water_pumped_m3": 0.13125000623404048,
+            "whole_water_error_m3": -5.8595453182874735e-06
+          },
+          {
+            "gold_error_g": 3.183231456205249e-12,
+            "grains": 407,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.11421938479396401,
+            "pocket_samples": 25845,
+            "pocket_slow_fraction": 0.2832656219771716,
+            "processed_m3": 0.0031999999999999295,
+            "settled_peak_by_riffle_m": [
+              0.015580062754452229,
+              0.019209694117307663,
+              0.031124111264944077,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              1.2002201032066088e-05,
+              2.0011212869377156e-06,
+              3.600008253593332e-05,
+              0.0
+            ],
+            "sim_seconds": 40.00000208616257,
+            "water_downstream_mps": 0.39761894941329956,
+            "water_pumped_m3": 0.1500000071246177,
+            "whole_water_error_m3": -7.132063448267445e-06
+          },
+          {
+            "gold_error_g": -4.547473508864641e-13,
+            "grains": 405,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.11888972719691855,
+            "pocket_samples": 25183,
+            "pocket_slow_fraction": 0.2512806258190049,
+            "processed_m3": 0.0036999999999998874,
+            "settled_peak_by_riffle_m": [
+              0.02761455997824669,
+              0.004993143957108259,
+              0.028051745146512985,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              1.400152736297857e-05,
+              1.0558370814426662e-09,
+              4.600017599204496e-05,
+              0.0
+            ],
+            "sim_seconds": 45.00000234693289,
+            "water_downstream_mps": 0.396858811378479,
+            "water_pumped_m3": 0.1687500080151949,
+            "whole_water_error_m3": -7.845839668618737e-06
+          },
+          {
+            "gold_error_g": 3.637978807091713e-12,
+            "grains": 410,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.12005383580080754,
+            "pocket_samples": 26005,
+            "pocket_slow_fraction": 0.27936935204768315,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.026454444974660873,
+              0.0032594981603324413,
+              0.018582846969366074,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              1.6001663564129447e-05,
+              1.5139860753739006e-09,
+              2.8000205874878183e-05,
+              0.0
+            ],
+            "sim_seconds": 50.00000260770321,
+            "water_downstream_mps": 0.3983337879180908,
+            "water_pumped_m3": 0.18750000890577212,
+            "whole_water_error_m3": -8.776530364684731e-06
+          },
+          {
+            "gold_error_g": 9.094947017729282e-13,
+            "grains": 233,
+            "phase": "clear_water_flush",
+            "pocket_reverse_fraction": 0.12095373440707406,
+            "pocket_samples": 25332,
+            "pocket_slow_fraction": 0.27846202431706935,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.015876632183790207,
+              0.004174071829766035,
+              0.01862647756934166,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              1.0001671929144823e-05,
+              1.5139860753739006e-09,
+              5.80002058748782e-05,
+              0.0
+            ],
+            "sim_seconds": 55.00000286847353,
+            "water_downstream_mps": 0.4018426835536957,
+            "water_pumped_m3": 0.20625000979634933,
+            "whole_water_error_m3": -9.528388105195518e-06
+          },
+          {
+            "gold_error_g": -1.8189894035458565e-12,
+            "grains": 221,
+            "phase": "clear_water_flush",
+            "pocket_reverse_fraction": 0.12704745099543518,
+            "pocket_samples": 26069,
+            "pocket_slow_fraction": 0.2578157965399517,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.015985939651727676,
+              0.003422978799790144,
+              0.02382427081465721,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              2.0001752052335158e-05,
+              1.44853621909801e-09,
+              5.8000204266382875e-05,
+              0.0
+            ],
+            "sim_seconds": 60.00000312924385,
+            "water_downstream_mps": 0.3996540606021881,
+            "water_pumped_m3": 0.22500001068692654,
+            "whole_water_error_m3": -1.0597495869291151e-05
+          },
+          {
+            "gold_error_g": 2.7284841053187847e-12,
+            "grains": 219,
+            "phase": "draining",
+            "pocket_reverse_fraction": 0.040474243663123466,
+            "pocket_samples": 2446,
+            "pocket_slow_fraction": 0.7567457072771873,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.01581951603293419,
+              0.0147731127217412,
+              0.015424665994942188,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              5.000159234211959e-05,
+              2.0015281232443286e-06,
+              6.600022001204715e-05,
+              0.0
+            ],
+            "sim_seconds": 65.00000339001417,
+            "water_downstream_mps": 0.005381613038480282,
+            "water_pumped_m3": 0.22500001068692654,
+            "whole_water_error_m3": -1.2023667530058901e-05
+          },
+          {
+            "gold_error_g": 3.183231456205249e-12,
+            "grains": 210,
+            "phase": "draining",
+            "pocket_reverse_fraction": 0.055234087322461864,
+            "pocket_samples": 1901,
+            "pocket_slow_fraction": 0.7096265123619148,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.0155801298096776,
+              0.0,
+              0.015062612481415272,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              5.40014579081148e-05,
+              1.528123244329493e-09,
+              6.600020373021777e-05,
+              1.4137168955592358e-11
+            ],
+            "sim_seconds": 70.00000365078449,
+            "water_downstream_mps": -0.003994633909314871,
+            "water_pumped_m3": 0.22500001068692654,
+            "whole_water_error_m3": -1.3255054788885445e-05
+          },
+          {
+            "gold_error_g": 4.547473508864641e-12,
+            "grains": 204,
+            "phase": "draining",
+            "pocket_reverse_fraction": 0.03756476683937824,
+            "pocket_samples": 1544,
+            "pocket_slow_fraction": 0.8238341968911918,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.015593339689075947,
+              0.012059521861374378,
+              0.015219596214592457,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              5.200086695507937e-05,
+              2.0016506579415325e-06,
+              6.400020212172246e-05,
+              0.0
+            ],
+            "sim_seconds": 75.00000391155481,
+            "water_downstream_mps": -0.0071291071362793446,
+            "water_pumped_m3": 0.22500001068692654,
+            "whole_water_error_m3": -1.4407895754686706e-05
+          }
+        ],
+        "parcel_m3": 2e-06,
+        "pressure_iterations": [
+          80,
+          40
+        ],
+        "requested_conditions_achieved": true,
+        "riffles": true,
+        "schema_version": 3,
+        "set_feed_m3s": 9.999999747378752e-05,
+        "set_water_m3s": 0.0037499999161809683,
+        "sim_seconds": 75.00000391155481,
+        "size_assay": [
+          {
+            "actual_cleanup_fraction": null,
+            "cleanup_gold_g": 0.0,
+            "diameter_m": 7.999999797903001e-05,
+            "gold_mass_residual_g": 0.0,
+            "injected_gold_g": 0.00012417583845201447,
+            "outlet_gold_g": 6.208791922600722e-05,
+            "outlet_loss_fraction": 0.4999999999999999,
+            "post_clear_flush_resident_fraction": 0.8333333333333334,
+            "quartz_outlet_fraction": 1.0,
+            "still_resident_gold_g": 6.208791922600725e-05,
+            "wash_resident_fraction": 0.8333333333333334
+          },
+          {
+            "actual_cleanup_fraction": null,
+            "cleanup_gold_g": 0.0,
+            "diameter_m": 0.0001500000071246177,
+            "gold_mass_residual_g": 0.0,
+            "injected_gold_g": 0.0008185420825287975,
+            "outlet_gold_g": 0.00010231776031609967,
+            "outlet_loss_fraction": 0.12499999999999999,
+            "post_clear_flush_resident_fraction": 0.9583333333333334,
+            "quartz_outlet_fraction": 1.0,
+            "still_resident_gold_g": 0.0007162243222126978,
+            "wash_resident_fraction": 0.9583333333333334
+          },
+          {
+            "actual_cleanup_fraction": null,
+            "cleanup_gold_g": 0.0,
+            "diameter_m": 0.0003000000142492354,
+            "gold_mass_residual_g": 0.0,
+            "injected_gold_g": 0.00654833666023038,
+            "outlet_gold_g": 0.00027284736084293246,
+            "outlet_loss_fraction": 0.041666666666666664,
+            "post_clear_flush_resident_fraction": 1.0,
+            "quartz_outlet_fraction": 0.5416666666666667,
+            "still_resident_gold_g": 0.0062754892993874475,
+            "wash_resident_fraction": 1.0
+          },
+          {
+            "actual_cleanup_fraction": null,
+            "cleanup_gold_g": 0.0,
+            "diameter_m": 0.0005000000237487257,
+            "gold_mass_residual_g": 0.0,
+            "injected_gold_g": 0.030316373426992484,
+            "outlet_gold_g": 0.0,
+            "outlet_loss_fraction": 0.0,
+            "post_clear_flush_resident_fraction": 1.0,
+            "quartz_outlet_fraction": 0.08333333333333337,
+            "still_resident_gold_g": 0.030316373426992484,
+            "wash_resident_fraction": 1.0
+          }
+        ],
+        "slope_deg": 9.833564758300781,
+        "tracer_seconds": 30.0,
+        "tracers_per_size": 24,
+        "wall_seconds": 65.04469825,
+        "warmup_seconds": 8,
+        "water_delivery_fraction": 1.0000000698491947,
+        "whole_water_error_m3": -1.4407895754686706e-05
+      },
+      "cleanup_reassessment": {
+        "cleanup_allowed": true,
+        "cleanup_error": null,
+        "collected_gold_by_size_g": [
+          2.5869966344169675e-05,
+          0.0006139065618965982,
+          0.00545694721685865,
+          0.02652682674861842
+        ],
+        "diameters_m": [
+          7.999999797903001e-05,
+          0.0001500000071246177,
+          0.0003000000142492354,
+          0.0005000000237487257
+        ],
+        "gold_error_g": 2.7284841053187847e-12,
+        "protocol": "settled_mat_fraction",
+        "resident_after": {
+          "diameters_m": [
+            7.999999797903001e-05,
+            0.0001500000071246177,
+            0.0003000000142492354,
+            0.0005000000237487257
+          ],
+          "gold_g": [
+            3.621795288183757e-05,
+            0.0001023177603160997,
+            0.0008185420825287976,
+            0.003789546678374062
+          ],
+          "quartz_m3": [
+            0.0,
+            0.0,
+            4.241150686677707e-11,
+            5.235988502071242e-10
+          ],
+          "resident_gold_count": [
+            7,
+            3,
+            3,
+            3
+          ]
+        },
+        "resident_before": {
+          "diameters_m": [
+            7.999999797903001e-05,
+            0.0001500000071246177,
+            0.0003000000142492354,
+            0.0005000000237487257
+          ],
+          "gold_g": [
+            6.208791922600725e-05,
+            0.0007162243222126978,
+            0.0062754892993874475,
+            0.030316373426992484
+          ],
+          "quartz_m3": [
+            0.0,
+            0.0,
+            1.5550885851151592e-10,
+            1.4398968380695922e-09
+          ],
+          "resident_gold_count": [
+            12,
+            21,
+            23,
+            24
+          ]
+        },
+        "sim_seconds": 75.00000391155481,
+        "source_save": "matrix-v3/nominal.save.json",
+        "water_error_m3": -1.4407895754686706e-05,
+        "additional_simulated_seconds": 0,
+        "fraction_of_injected_gold": [
+          0.2083333333333333,
+          0.75,
+          0.8333333333333334,
+          0.8749999999999999
+        ]
+      }
+    },
+    {
+      "physics_trial": {
+        "bed_loading_seconds": 12,
+        "boundaries": {
+          "grain_centres_over_2mm_inside_solid": 0,
+          "max_grain_surface_penetration_m": 0.00018646661192178726,
+          "water_centres_over_2mm_inside_solid": 0
+        },
+        "case": "high",
+        "cell_m": 0.009999999776482582,
+        "cleanup_allowed": false,
+        "cleanup_error": "Let the material settle before lifting the mats",
+        "clear_flush_seconds": 10,
+        "component": "sluice",
+        "contact_model": "Coulomb",
+        "delivered_feed_m3s": 9.999999999999641e-05,
+        "delivered_water_m3s": 0.007500000356230885,
+        "drain_seconds": 15,
+        "externally_validated_recovery": false,
+        "feed_delivery_fraction": 1.0000000252620895,
+        "fluid_hz": 120,
+        "gold_error_g": 3.183231456205249e-12,
+        "interphase_momentum_verified": false,
+        "limits": [
+          "weighted bulk parcels",
+          "voxel ramp and riffles",
+          "unresolved mat fibres",
+          "no calibrated flake drag",
+          "not matched to an experimental geometry",
+          "24 deterministic lateral positions per size; no statistical confidence claim"
+        ],
+        "mass_and_finite_checks_passed": true,
+        "model_revision": "2026-10-21-apic-contacts",
+        "observations": [
+          {
+            "gold_error_g": 3.183231456205249e-12,
+            "grains": 0,
+            "phase": "warmup",
+            "pocket_reverse_fraction": 0.12321423223217227,
+            "pocket_samples": 33389,
+            "pocket_slow_fraction": 0.28254814459852046,
+            "processed_m3": 0.0,
+            "settled_peak_by_riffle_m": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sim_seconds": 5.000000260770321,
+            "water_downstream_mps": 0.529458224773407,
+            "water_pumped_m3": 0.037500001781154424,
+            "whole_water_error_m3": -7.242681174801646e-07
+          },
+          {
+            "gold_error_g": 2.7284841053187847e-12,
+            "grains": 212,
+            "phase": "bed_loading",
+            "pocket_reverse_fraction": 0.1288962773852639,
+            "pocket_samples": 33686,
+            "pocket_slow_fraction": 0.2847770587187556,
+            "processed_m3": 0.0004999999999999991,
+            "settled_peak_by_riffle_m": [
+              0.015718583017587662,
+              0.0,
+              0.020178820937871933,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              6e-06,
+              0.0,
+              4e-06,
+              0.0
+            ],
+            "sim_seconds": 13.000000678002834,
+            "water_downstream_mps": 0.5248646140098572,
+            "water_pumped_m3": 0.0975000046310015,
+            "whole_water_error_m3": -1.7699033758589167e-06
+          },
+          {
+            "gold_error_g": 5.9117155615240335e-12,
+            "grains": 226,
+            "phase": "bed_loading",
+            "pocket_reverse_fraction": 0.12840363839745667,
+            "pocket_samples": 33971,
+            "pocket_slow_fraction": 0.28465455829972625,
+            "processed_m3": 0.0010000000000000113,
+            "settled_peak_by_riffle_m": [
+              0.021325115114450455,
+              0.0,
+              0.027844082564115524,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              1.6e-05,
+              0.0,
+              6e-06,
+              0.0
+            ],
+            "sim_seconds": 18.000000938773155,
+            "water_downstream_mps": 0.5266324877738953,
+            "water_pumped_m3": 0.13500000641215593,
+            "whole_water_error_m3": -2.3784689631156652e-06
+          },
+          {
+            "gold_error_g": 5.4569682106375694e-12,
+            "grains": 349,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.11704275534441805,
+            "pocket_samples": 33680,
+            "pocket_slow_fraction": 0.2565023752969121,
+            "processed_m3": 0.0017000000000000283,
+            "settled_peak_by_riffle_m": [
+              0.012964283116161823,
+              0.008030494675040245,
+              0.017964493483304977,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              1.0000785600908007e-05,
+              1.4278666307702001e-09,
+              1.400034613025563e-05,
+              1.767146119449045e-12
+            ],
+            "sim_seconds": 25.000001303851604,
+            "water_downstream_mps": 0.5265530943870544,
+            "water_pumped_m3": 0.18750000890577212,
+            "whole_water_error_m3": -4.183205525976064e-06
+          },
+          {
+            "gold_error_g": 3.637978807091713e-12,
+            "grains": 333,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.13993824918270978,
+            "pocket_samples": 33036,
+            "pocket_slow_fraction": 0.29549582273883035,
+            "processed_m3": 0.0022000000000000136,
+            "settled_peak_by_riffle_m": [
+              0.016927164047956467,
+              0.005102252122014761,
+              0.0006084640044718981,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              8.000930369706963e-06,
+              1.2896957010441092e-09,
+              2.94188202253024e-10,
+              1.4405251508381681e-11
+            ],
+            "sim_seconds": 30.000001564621925,
+            "water_downstream_mps": 0.5244805216789246,
+            "water_pumped_m3": 0.22500001068692654,
+            "whole_water_error_m3": -5.2109720023452155e-06
+          },
+          {
+            "gold_error_g": 7.275957614183426e-12,
+            "grains": 336,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.13087006193253561,
+            "pocket_samples": 33262,
+            "pocket_slow_fraction": 0.2857915940111839,
+            "processed_m3": 0.0026999999999999715,
+            "settled_peak_by_riffle_m": [
+              0.013773229904472828,
+              0.004516202490776777,
+              0.019790764898061752,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              2.0009303697069605e-06,
+              2.200227818426611e-09,
+              2.200030682630764e-05,
+              1.4405251508381681e-11
+            ],
+            "sim_seconds": 35.000001825392246,
+            "water_downstream_mps": 0.5244815945625305,
+            "water_pumped_m3": 0.26250001246808097,
+            "whole_water_error_m3": -6.2925331718588495e-06
+          },
+          {
+            "gold_error_g": 3.637978807091713e-12,
+            "grains": 326,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.13341493268053856,
+            "pocket_samples": 33497,
+            "pocket_slow_fraction": 0.3091918679284712,
+            "processed_m3": 0.0031999999999999295,
+            "settled_peak_by_riffle_m": [
+              0.014262889511883259,
+              0.00551458029076457,
+              0.02826681360602379,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              8.000916232538007e-06,
+              2.1860906494710185e-09,
+              3.6000182683115144e-05,
+              5.361651055786464e-13
+            ],
+            "sim_seconds": 40.00000208616257,
+            "water_downstream_mps": 0.5215849280357361,
+            "water_pumped_m3": 0.3000000142492354,
+            "whole_water_error_m3": -7.411539886703622e-06
+          },
+          {
+            "gold_error_g": 2.2737367544323206e-12,
+            "grains": 311,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.1274512712492954,
+            "pocket_samples": 33707,
+            "pocket_slow_fraction": 0.26869789657934556,
+            "processed_m3": 0.0036999999999998874,
+            "settled_peak_by_riffle_m": [
+              0.012928810901939869,
+              0.003736678045243025,
+              0.021506186574697495,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              2.000458083544075e-06,
+              1.6961330253897044e-09,
+              8.000394936999026e-06,
+              2.854242046397404e-11
+            ],
+            "sim_seconds": 45.00000234693289,
+            "water_downstream_mps": 0.5293483138084412,
+            "water_pumped_m3": 0.3375000160303898,
+            "whole_water_error_m3": -8.210991129686818e-06
+          },
+          {
+            "gold_error_g": 2.7284841053187847e-12,
+            "grains": 324,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.1334943396226415,
+            "pocket_samples": 33125,
+            "pocket_slow_fraction": 0.2874566037735849,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.018056709319353104,
+              0.005579549353569746,
+              0.0210590623319149,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              6.000458083544072e-06,
+              2.44789007457458e-09,
+              2.4000366126496e-05,
+              1.4405251508381681e-11
+            ],
+            "sim_seconds": 50.00000260770321,
+            "water_downstream_mps": 0.5252897143363953,
+            "water_pumped_m3": 0.37500001781154424,
+            "whole_water_error_m3": -9.524061098886705e-06
+          },
+          {
+            "gold_error_g": 5.9117155615240335e-12,
+            "grains": 160,
+            "phase": "clear_water_flush",
+            "pocket_reverse_fraction": 0.13156474820143885,
+            "pocket_samples": 33360,
+            "pocket_slow_fraction": 0.26636690647482014,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.013000373728573322,
+              0.005019563715904951,
+              0.020272444933652878,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              1.4000449247813475e-05,
+              2.513339930850472e-09,
+              2.8000366126496006e-05,
+              1.4405251508381681e-11
+            ],
+            "sim_seconds": 55.00000286847353,
+            "water_downstream_mps": 0.5287787318229675,
+            "water_pumped_m3": 0.41250001959269866,
+            "whole_water_error_m3": -1.085328878502878e-05
+          },
+          {
+            "gold_error_g": 4.547473508864641e-12,
+            "grains": 149,
+            "phase": "clear_water_flush",
+            "pocket_reverse_fraction": 0.12623888373207173,
+            "pocket_samples": 33397,
+            "pocket_slow_fraction": 0.26601191723807527,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.015972334891557693,
+              0.0007848623208701611,
+              0.014019918628036976,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              4.0004580835440736e-06,
+              1.220508919832807e-09,
+              2.6000336085011978e-05,
+              2.680825527893232e-13
+            ],
+            "sim_seconds": 60.00000312924385,
+            "water_downstream_mps": 0.533715546131134,
+            "water_pumped_m3": 0.4500000213738531,
+            "whole_water_error_m3": -1.1589019358382302e-05
+          },
+          {
+            "gold_error_g": 4.547473508864641e-12,
+            "grains": 145,
+            "phase": "draining",
+            "pocket_reverse_fraction": 0.0364797081623347,
+            "pocket_samples": 2193,
+            "pocket_slow_fraction": 0.7802097583219334,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.012885172851383686,
+              0.0,
+              0.015219968743622303,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              1.2000458083544076e-05,
+              1.7138044865841946e-09,
+              3.600035198932706e-05,
+              0.0
+            ],
+            "sim_seconds": 65.00000339001417,
+            "water_downstream_mps": 0.0022858481388539076,
+            "water_pumped_m3": 0.4500000213738531,
+            "whole_water_error_m3": -1.2473020664316437e-05
+          },
+          {
+            "gold_error_g": 3.637978807091713e-12,
+            "grains": 142,
+            "phase": "draining",
+            "pocket_reverse_fraction": 0.039014373716632446,
+            "pocket_samples": 1948,
+            "pocket_slow_fraction": 0.771047227926078,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.014136460609734058,
+              0.0020063254050910473,
+              0.01452107448130846,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              8.000458083544073e-06,
+              1.1603605019152636e-09,
+              3.6000283005178544e-05,
+              0.0
+            ],
+            "sim_seconds": 70.00000365078449,
+            "water_downstream_mps": 0.0015507651260122657,
+            "water_pumped_m3": 0.4500000213738531,
+            "whole_water_error_m3": -1.2977211504505703e-05
+          },
+          {
+            "gold_error_g": 3.183231456205249e-12,
+            "grains": 142,
+            "phase": "draining",
+            "pocket_reverse_fraction": 0.034610630407911,
+            "pocket_samples": 1618,
+            "pocket_slow_fraction": 0.8634116192830655,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.012877856381237507,
+              0.0,
+              0.014323142357170582,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              6.000458083544073e-06,
+              2.5133399308504714e-09,
+              3.6000283005178544e-05,
+              0.0
+            ],
+            "sim_seconds": 75.00000391155481,
+            "water_downstream_mps": -0.00122362794354558,
+            "water_pumped_m3": 0.4500000213738531,
+            "whole_water_error_m3": -1.351090710244307e-05
+          }
+        ],
+        "parcel_m3": 2e-06,
+        "pressure_iterations": [
+          80,
+          40
+        ],
+        "requested_conditions_achieved": true,
+        "riffles": true,
+        "schema_version": 3,
+        "set_feed_m3s": 9.999999747378752e-05,
+        "set_water_m3s": 0.007499999832361937,
+        "sim_seconds": 75.00000391155481,
+        "size_assay": [
+          {
+            "actual_cleanup_fraction": null,
+            "cleanup_gold_g": 0.0,
+            "diameter_m": 7.999999797903001e-05,
+            "gold_mass_residual_g": 0.0,
+            "injected_gold_g": 0.00012417583845201447,
+            "outlet_gold_g": 0.00012417583845201447,
+            "outlet_loss_fraction": 1.0,
+            "post_clear_flush_resident_fraction": 0.041666666666666685,
+            "quartz_outlet_fraction": 1.0,
+            "still_resident_gold_g": 0.0,
+            "wash_resident_fraction": 0.12500000000000006
+          },
+          {
+            "actual_cleanup_fraction": null,
+            "cleanup_gold_g": 0.0,
+            "diameter_m": 0.0001500000071246177,
+            "gold_mass_residual_g": 0.0,
+            "injected_gold_g": 0.0008185420825287975,
+            "outlet_gold_g": 0.00013642368042146623,
+            "outlet_loss_fraction": 0.16666666666666666,
+            "post_clear_flush_resident_fraction": 0.9166666666666666,
+            "quartz_outlet_fraction": 1.0,
+            "still_resident_gold_g": 0.0006821184021073313,
+            "wash_resident_fraction": 0.9166666666666666
+          },
+          {
+            "actual_cleanup_fraction": null,
+            "cleanup_gold_g": 0.0,
+            "diameter_m": 0.0003000000142492354,
+            "gold_mass_residual_g": 0.0,
+            "injected_gold_g": 0.00654833666023038,
+            "outlet_gold_g": 0.00027284736084293246,
+            "outlet_loss_fraction": 0.041666666666666664,
+            "post_clear_flush_resident_fraction": 1.0,
+            "quartz_outlet_fraction": 0.9583333333333334,
+            "still_resident_gold_g": 0.0062754892993874475,
+            "wash_resident_fraction": 1.0
+          },
+          {
+            "actual_cleanup_fraction": null,
+            "cleanup_gold_g": 0.0,
+            "diameter_m": 0.0005000000237487257,
+            "gold_mass_residual_g": 0.0,
+            "injected_gold_g": 0.030316373426992484,
+            "outlet_gold_g": 0.0,
+            "outlet_loss_fraction": 0.0,
+            "post_clear_flush_resident_fraction": 1.0,
+            "quartz_outlet_fraction": 0.16666666666666685,
+            "still_resident_gold_g": 0.030316373426992484,
+            "wash_resident_fraction": 1.0
+          }
+        ],
+        "slope_deg": 9.833564758300781,
+        "tracer_seconds": 30.0,
+        "tracers_per_size": 24,
+        "wall_seconds": 77.454776083,
+        "warmup_seconds": 8,
+        "water_delivery_fraction": 1.0000000698491947,
+        "whole_water_error_m3": -1.351090710244307e-05
+      },
+      "cleanup_reassessment": {
+        "cleanup_allowed": true,
+        "cleanup_error": null,
+        "collected_gold_by_size_g": [
+          0.0,
+          0.0006821184021073313,
+          0.0062754892993874475,
+          0.030316373426992484
+        ],
+        "diameters_m": [
+          7.999999797903001e-05,
+          0.0001500000071246177,
+          0.0003000000142492354,
+          0.0005000000237487257
+        ],
+        "gold_error_g": 3.183231456205249e-12,
+        "protocol": "settled_mat_fraction",
+        "resident_after": {
+          "diameters_m": [
+            7.999999797903001e-05,
+            0.0001500000071246177,
+            0.0003000000142492354,
+            0.0005000000237487257
+          ],
+          "gold_g": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "quartz_m3": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "resident_gold_count": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "resident_before": {
+          "diameters_m": [
+            7.999999797903001e-05,
+            0.0001500000071246177,
+            0.0003000000142492354,
+            0.0005000000237487257
+          ],
+          "gold_g": [
+            0.0,
+            0.0006821184021073313,
+            0.0062754892993874475,
+            0.030316373426992484
+          ],
+          "quartz_m3": [
+            0.0,
+            0.0,
+            1.4137168955592358e-11,
+            1.308997125517811e-09
+          ],
+          "resident_gold_count": [
+            0,
+            20,
+            23,
+            24
+          ]
+        },
+        "sim_seconds": 75.00000391155481,
+        "source_save": "matrix-v3/high.save.json",
+        "water_error_m3": -1.351090710244307e-05,
+        "additional_simulated_seconds": 0,
+        "fraction_of_injected_gold": [
+          0.0,
+          0.8333333333333334,
+          0.9583333333333334,
+          1.0
+        ]
+      }
+    },
+    {
+      "physics_trial": {
+        "bed_loading_seconds": 12,
+        "boundaries": {
+          "grain_centres_over_2mm_inside_solid": 0,
+          "max_grain_surface_penetration_m": 0.0,
+          "water_centres_over_2mm_inside_solid": 0
+        },
+        "case": "bare",
+        "cell_m": 0.009999999776482582,
+        "cleanup_allowed": false,
+        "cleanup_error": "The mats are empty",
+        "clear_flush_seconds": 10,
+        "component": "sluice",
+        "contact_model": "Coulomb",
+        "delivered_feed_m3s": 9.999999999999641e-05,
+        "delivered_water_m3s": 0.0037500001781154424,
+        "drain_seconds": 15,
+        "externally_validated_recovery": false,
+        "feed_delivery_fraction": 1.0000000252620895,
+        "fluid_hz": 120,
+        "gold_error_g": 9.094947017729282e-13,
+        "interphase_momentum_verified": false,
+        "limits": [
+          "weighted bulk parcels",
+          "voxel ramp and riffles",
+          "unresolved mat fibres",
+          "no calibrated flake drag",
+          "not matched to an experimental geometry",
+          "24 deterministic lateral positions per size; no statistical confidence claim"
+        ],
+        "mass_and_finite_checks_passed": true,
+        "model_revision": "2026-10-21-apic-contacts",
+        "observations": [
+          {
+            "gold_error_g": -9.094947017729282e-13,
+            "grains": 0,
+            "phase": "warmup",
+            "pocket_reverse_fraction": 0.007819173401668966,
+            "pocket_samples": 15219,
+            "pocket_slow_fraction": 0.07924305144884683,
+            "processed_m3": 0.0,
+            "settled_peak_by_riffle_m": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sim_seconds": 5.000000260770321,
+            "water_downstream_mps": 0.5464673042297363,
+            "water_pumped_m3": 0.018750000890577212,
+            "whole_water_error_m3": -7.132450985380956e-07
+          },
+          {
+            "gold_error_g": 7.275957614183426e-12,
+            "grains": 106,
+            "phase": "bed_loading",
+            "pocket_reverse_fraction": 0.007923368022705771,
+            "pocket_samples": 16912,
+            "pocket_slow_fraction": 0.07184247871333964,
+            "processed_m3": 0.0004999999999999991,
+            "settled_peak_by_riffle_m": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sim_seconds": 13.000000678002834,
+            "water_downstream_mps": 0.5351831316947937,
+            "water_pumped_m3": 0.04875000231550075,
+            "whole_water_error_m3": -2.1738207447441482e-06
+          },
+          {
+            "gold_error_g": 0.0,
+            "grains": 105,
+            "phase": "bed_loading",
+            "pocket_reverse_fraction": 0.006417493612217006,
+            "pocket_samples": 16829,
+            "pocket_slow_fraction": 0.06292709014201675,
+            "processed_m3": 0.0010000000000000113,
+            "settled_peak_by_riffle_m": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sim_seconds": 18.000000938773155,
+            "water_downstream_mps": 0.5414396524429321,
+            "water_pumped_m3": 0.06750000320607796,
+            "whole_water_error_m3": -3.096742872799041e-06
+          },
+          {
+            "gold_error_g": 4.092726157978177e-12,
+            "grains": 175,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.006984794164915317,
+            "pocket_samples": 16178,
+            "pocket_slow_fraction": 0.07887254295957473,
+            "processed_m3": 0.0017000000000000283,
+            "settled_peak_by_riffle_m": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              0.0,
+              0.0,
+              1.0786136314266762e-10,
+              0.0
+            ],
+            "sim_seconds": 25.000001303851604,
+            "water_downstream_mps": 0.5383734703063965,
+            "water_pumped_m3": 0.09375000445288606,
+            "whole_water_error_m3": -4.075183106522218e-06
+          },
+          {
+            "gold_error_g": 2.2737367544323206e-12,
+            "grains": 103,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.005931417979610751,
+            "pocket_samples": 16185,
+            "pocket_slow_fraction": 0.06481309854803831,
+            "processed_m3": 0.0022000000000000136,
+            "settled_peak_by_riffle_m": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sim_seconds": 30.000001564621925,
+            "water_downstream_mps": 0.5370941758155823,
+            "water_pumped_m3": 0.11250000534346327,
+            "whole_water_error_m3": -4.9452483068535e-06
+          },
+          {
+            "gold_error_g": 7.275957614183426e-12,
+            "grains": 106,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.0076270669351394225,
+            "pocket_samples": 16389,
+            "pocket_slow_fraction": 0.06113856855207761,
+            "processed_m3": 0.0026999999999999715,
+            "settled_peak_by_riffle_m": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sim_seconds": 35.000001825392246,
+            "water_downstream_mps": 0.5475345253944397,
+            "water_pumped_m3": 0.13125000623404048,
+            "whole_water_error_m3": -5.745752936547888e-06
+          },
+          {
+            "gold_error_g": 5.4569682106375694e-12,
+            "grains": 101,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.006267666216050141,
+            "pocket_samples": 16274,
+            "pocket_slow_fraction": 0.06912867150055303,
+            "processed_m3": 0.0031999999999999295,
+            "settled_peak_by_riffle_m": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sim_seconds": 40.00000208616257,
+            "water_downstream_mps": 0.540407121181488,
+            "water_pumped_m3": 0.1500000071246177,
+            "whole_water_error_m3": -6.809746015079554e-06
+          },
+          {
+            "gold_error_g": 6.366462912410498e-12,
+            "grains": 104,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.0063656725215136154,
+            "pocket_samples": 16966,
+            "pocket_slow_fraction": 0.06795944830838146,
+            "processed_m3": 0.0036999999999998874,
+            "settled_peak_by_riffle_m": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sim_seconds": 45.00000234693289,
+            "water_downstream_mps": 0.5400296449661255,
+            "water_pumped_m3": 0.1687500080151949,
+            "whole_water_error_m3": -7.704326655755267e-06
+          },
+          {
+            "gold_error_g": -4.547473508864641e-13,
+            "grains": 103,
+            "phase": "tracer_with_feed",
+            "pocket_reverse_fraction": 0.006828057107386716,
+            "pocket_samples": 16110,
+            "pocket_slow_fraction": 0.07566728739913098,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sim_seconds": 50.00000260770321,
+            "water_downstream_mps": 0.5426883101463318,
+            "water_pumped_m3": 0.18750000890577212,
+            "whole_water_error_m3": -8.432190227836145e-06
+          },
+          {
+            "gold_error_g": 5.4569682106375694e-12,
+            "grains": 0,
+            "phase": "clear_water_flush",
+            "pocket_reverse_fraction": 0.006614173228346456,
+            "pocket_samples": 15875,
+            "pocket_slow_fraction": 0.061039370078740156,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sim_seconds": 55.00000286847353,
+            "water_downstream_mps": 0.553747296333313,
+            "water_pumped_m3": 0.20625000979634933,
+            "whole_water_error_m3": -9.165296908975051e-06
+          },
+          {
+            "gold_error_g": 2.2737367544323206e-12,
+            "grains": 0,
+            "phase": "clear_water_flush",
+            "pocket_reverse_fraction": 0.004815017980130432,
+            "pocket_samples": 16407,
+            "pocket_slow_fraction": 0.060157249954287804,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sim_seconds": 60.00000312924385,
+            "water_downstream_mps": 0.546036422252655,
+            "water_pumped_m3": 0.22500001068692654,
+            "whole_water_error_m3": -1.0107830739514156e-05
+          },
+          {
+            "gold_error_g": 5.002220859751105e-12,
+            "grains": 0,
+            "phase": "draining",
+            "pocket_reverse_fraction": 0.020683171419617674,
+            "pocket_samples": 3191,
+            "pocket_slow_fraction": 0.89157004073958,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sim_seconds": 65.00000339001417,
+            "water_downstream_mps": 0.07079651951789856,
+            "water_pumped_m3": 0.22500001068692654,
+            "whole_water_error_m3": -1.1171031982115665e-05
+          },
+          {
+            "gold_error_g": 3.183231456205249e-12,
+            "grains": 0,
+            "phase": "draining",
+            "pocket_reverse_fraction": 0.060665362035225046,
+            "pocket_samples": 1533,
+            "pocket_slow_fraction": 0.9660795825179387,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sim_seconds": 70.00000365078449,
+            "water_downstream_mps": 0.03908783569931984,
+            "water_pumped_m3": 0.22500001068692654,
+            "whole_water_error_m3": -1.1920660579534115e-05
+          },
+          {
+            "gold_error_g": 9.094947017729282e-13,
+            "grains": 0,
+            "phase": "draining",
+            "pocket_reverse_fraction": 0.011915673693858845,
+            "pocket_samples": 1091,
+            "pocket_slow_fraction": 0.9935838680109991,
+            "processed_m3": 0.004199999999999909,
+            "settled_peak_by_riffle_m": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "settled_volume_by_riffle_m3": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sim_seconds": 75.00000391155481,
+            "water_downstream_mps": 0.03079581819474697,
+            "water_pumped_m3": 0.22500001068692654,
+            "whole_water_error_m3": -1.3517271231222594e-05
+          }
+        ],
+        "parcel_m3": 2e-06,
+        "pressure_iterations": [
+          80,
+          40
+        ],
+        "requested_conditions_achieved": true,
+        "riffles": false,
+        "schema_version": 3,
+        "set_feed_m3s": 9.999999747378752e-05,
+        "set_water_m3s": 0.0037499999161809683,
+        "sim_seconds": 75.00000391155481,
+        "size_assay": [
+          {
+            "actual_cleanup_fraction": null,
+            "cleanup_gold_g": 0.0,
+            "diameter_m": 7.999999797903001e-05,
+            "gold_mass_residual_g": 0.0,
+            "injected_gold_g": 0.00012417583845201447,
+            "outlet_gold_g": 0.00012417583845201447,
+            "outlet_loss_fraction": 1.0,
+            "post_clear_flush_resident_fraction": 0.0,
+            "quartz_outlet_fraction": 1.0,
+            "still_resident_gold_g": 0.0,
+            "wash_resident_fraction": 0.0
+          },
+          {
+            "actual_cleanup_fraction": null,
+            "cleanup_gold_g": 0.0,
+            "diameter_m": 0.0001500000071246177,
+            "gold_mass_residual_g": 0.0,
+            "injected_gold_g": 0.0008185420825287975,
+            "outlet_gold_g": 0.0008185420825287975,
+            "outlet_loss_fraction": 1.0,
+            "post_clear_flush_resident_fraction": 0.0,
+            "quartz_outlet_fraction": 1.0,
+            "still_resident_gold_g": 0.0,
+            "wash_resident_fraction": 0.0
+          },
+          {
+            "actual_cleanup_fraction": null,
+            "cleanup_gold_g": 0.0,
+            "diameter_m": 0.0003000000142492354,
+            "gold_mass_residual_g": 0.0,
+            "injected_gold_g": 0.00654833666023038,
+            "outlet_gold_g": 0.00654833666023038,
+            "outlet_loss_fraction": 1.0,
+            "post_clear_flush_resident_fraction": 0.0,
+            "quartz_outlet_fraction": 1.0,
+            "still_resident_gold_g": 0.0,
+            "wash_resident_fraction": 0.0
+          },
+          {
+            "actual_cleanup_fraction": null,
+            "cleanup_gold_g": 0.0,
+            "diameter_m": 0.0005000000237487257,
+            "gold_mass_residual_g": 0.0,
+            "injected_gold_g": 0.030316373426992484,
+            "outlet_gold_g": 0.030316373426992484,
+            "outlet_loss_fraction": 1.0,
+            "post_clear_flush_resident_fraction": 0.0,
+            "quartz_outlet_fraction": 1.0,
+            "still_resident_gold_g": 0.0,
+            "wash_resident_fraction": 0.0
+          }
+        ],
+        "slope_deg": 9.833564758300781,
+        "tracer_seconds": 30.0,
+        "tracers_per_size": 24,
+        "wall_seconds": 59.785152584,
+        "warmup_seconds": 8,
+        "water_delivery_fraction": 1.0000000698491947,
+        "whole_water_error_m3": -1.3517271231222594e-05
+      },
+      "cleanup_reassessment": {
+        "cleanup_allowed": false,
+        "cleanup_error": "The mats are empty",
+        "collected_gold_by_size_g": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "diameters_m": [
+          7.999999797903001e-05,
+          0.0001500000071246177,
+          0.0003000000142492354,
+          0.0005000000237487257
+        ],
+        "gold_error_g": 0.0,
+        "protocol": "settled_mat_fraction",
+        "resident_after": {
+          "diameters_m": [
+            7.999999797903001e-05,
+            0.0001500000071246177,
+            0.0003000000142492354,
+            0.0005000000237487257
+          ],
+          "gold_g": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "quartz_m3": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "resident_gold_count": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "resident_before": {
+          "diameters_m": [
+            7.999999797903001e-05,
+            0.0001500000071246177,
+            0.0003000000142492354,
+            0.0005000000237487257
+          ],
+          "gold_g": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "quartz_m3": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "resident_gold_count": [
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "sim_seconds": 75.00000391155481,
+        "source_save": "matrix-v3/bare.save.json",
+        "water_error_m3": -1.3517271231222594e-05,
+        "additional_simulated_seconds": 0,
+        "fraction_of_injected_gold": [
+          null,
+          null,
+          null,
+          null
+        ]
+      }
+    }
+  ],
+  "exploratory_intermediate_cases": [
+    {
+      "case": "bare",
+      "status": "exploratory intermediate model before SDF/APIC corrections; not final convergence evidence",
+      "outlet_loss_fraction": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "case": "heavy_feed",
+      "status": "exploratory intermediate model before SDF/APIC corrections; not final convergence evidence",
+      "outlet_loss_fraction": [
+        1.0,
+        0.16666666666666666,
+        0.041666666666666664,
+        0.0
+      ]
+    },
+    {
+      "case": "high",
+      "status": "exploratory intermediate model before SDF/APIC corrections; not final convergence evidence",
+      "outlet_loss_fraction": [
+        1.0,
+        0.24999999999999997,
+        0.041666666666666664,
+        0.0
+      ]
+    },
+    {
+      "case": "low",
+      "status": "exploratory intermediate model before SDF/APIC corrections; not final convergence evidence",
+      "outlet_loss_fraction": [
+        0.7916666666666666,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "case": "nominal",
+      "status": "exploratory intermediate model before SDF/APIC corrections; not final convergence evidence",
+      "outlet_loss_fraction": [
+        1.0,
+        0.16666666666666666,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "case": "parcel_coarse",
+      "status": "exploratory intermediate model before SDF/APIC corrections; not final convergence evidence",
+      "outlet_loss_fraction": [
+        1.0,
+        0.08333333333333333,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "case": "parcel_fine",
+      "status": "exploratory intermediate model before SDF/APIC corrections; not final convergence evidence",
+      "outlet_loss_fraction": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "momentum_diagnostic": {
+    "status": "fails closed full-step momentum budget; not isolated interphase drag",
+    "measurement": [
+      {
+        "case": "water_control",
+        "dt": 0.008333333767950535,
+        "exchange_imbalance_fraction": 1.0,
+        "fluid_momentum_change": [
+          0.8518882393836975,
+          3.7602148950099945e-08,
+          -3.841705620288849e-09
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          100.80451202392578,
+          3.8533471524715424e-08,
+          2.6775524020195007e-09
+        ],
+        "momentum_before_relative_mass_mps": [
+          99.1995849609375,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          1.6049270629882812,
+          3.8533471524715424e-08,
+          2.6775524020195007e-09
+        ],
+        "relative_to_initial_momentum": 0.016178768128156662,
+        "solid_final_velocity": [
+          -0.15295618772506714,
+          5.820766091346741e-11,
+          4.0745362639427185e-10
+        ],
+        "solid_momentum_change": [
+          0.7527010440826416,
+          9.313225746154785e-10,
+          6.51925802230835e-09
+        ]
+      },
+      {
+        "case": "mixed_120hz",
+        "dt": 0.008333333767950535,
+        "exchange_imbalance_fraction": 1.0,
+        "fluid_momentum_change": [
+          1.809382438659668,
+          -6.915070116519928e-08,
+          -5.2386894822120667e-08
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          103.64411926269531,
+          -6.915070116519928e-08,
+          -5.2386894822120667e-08
+        ],
+        "momentum_before_relative_mass_mps": [
+          93.9195785522461,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          9.724540710449219,
+          -6.915070116519928e-08,
+          -5.2386894822120667e-08
+        ],
+        "relative_to_initial_momentum": 0.10354114323854446,
+        "solid_final_velocity": [
+          -0.013330339454114437,
+          0.0,
+          0.0
+        ],
+        "solid_momentum_change": [
+          7.914793968200684,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "mixed_240hz",
+        "dt": 0.004166666883975267,
+        "exchange_imbalance_fraction": 1.0,
+        "fluid_momentum_change": [
+          1.809382438659668,
+          -6.915070116519928e-08,
+          -5.2386894822120667e-08
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          100.30387878417969,
+          -6.915070116519928e-08,
+          -5.2386894822120667e-08
+        ],
+        "momentum_before_relative_mass_mps": [
+          93.9195785522461,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          6.384300231933594,
+          -6.915070116519928e-08,
+          -5.2386894822120667e-08
+        ],
+        "relative_to_initial_momentum": 0.06797624379396439,
+        "solid_final_velocity": [
+          -0.09210964292287827,
+          0.0,
+          0.0
+        ],
+        "solid_momentum_change": [
+          4.574551582336426,
+          0.0,
+          0.0
+        ]
+      }
+    ],
+    "gravity": 0,
+    "pressure_and_transfer_included": true,
+    "externally_validated": false
+  },
+  "checks": [
+    {
+      "suite": "analytical contact and SDF",
+      "passed": 113,
+      "log_sha256": "13b7bc1d5b229d2129313b84815a26de54128000f547b5f491f51d3290d3583e"
+    },
+    {
+      "suite": "mining domain",
+      "passed": 29,
+      "log_sha256": "b40bb56cdf7f7e62a67f9a37c6b8962484e5ed868a1da6091dbde7a7bedfcc1a"
+    },
+    {
+      "suite": "mining physics including actual GPU",
+      "passed": 15,
+      "log_sha256": "849388a743399b14220be80603766769b981340c3a274068348871ffa9c70f61"
+    },
+    {
+      "suite": "native app and bundled demo",
+      "passed": 25,
+      "log_sha256": "e502e52380a0e777aa8f87d275863827530d87e71824db673a8bb17618ecf61b"
+    }
+  ],
+  "focused_clippy": "passed; dependency game retains existing dead_code warning",
+  "stopped_checks": [
+    {
+      "selection": "sim3d and mining-sim broad --lib --tests selection",
+      "reason": "stopped owned process before compiling unrelated integration suite",
+      "passed": false
+    }
+  ],
+  "demo": {
+    "sim_seconds": 40.01666875369847,
+    "contact_model": "Coulomb",
+    "water_particles": 106084,
+    "grains": 1358,
+    "hopper_m3": 0.8051900781728167,
+    "asset_sha256": "da842b36dfbcce024917458526366953a442df72fa820c2308c6b9f3d7cebb6f"
+  },
+  "native_benchmark": {
+    "detail_revision": 3,
+    "exported_gold_g": 5.533280379677878,
+    "exported_material_m3": [
+      0.0,
+      0.5337888482461204,
+      0.0,
+      0.6056581364854932
+    ],
+    "fluid_surface_ready": true,
+    "gold_balance_error_g": 3.183231456205249e-12,
+    "grains": 1724,
+    "last_worker_tick_ms": 66.336542,
+    "mean_fps": 48.542498504510235,
+    "one_second_ratios": [
+      0.687445252054823,
+      0.676397674680432,
+      0.6775389705517215,
+      0.5941134806618558,
+      0.7047538383380759,
+      0.5311585726125579,
+      0.6614731995123472,
+      0.6411490746939692,
+      0.6581560850996195,
+      0.645726386841858,
+      0.6934002930582452,
+      0.6806365454066413,
+      0.6525340645066309,
+      0.659357286780132,
+      0.6600653607009924,
+      0.6855822976907394,
+      0.6541441742051679,
+      0.664036370368467,
+      0.5922222047409146
+    ],
+    "outflow_particles": 10849,
+    "p95_frame_ms": 49.08191600000001,
+    "passed": false,
+    "simulation_seconds": 13.033334013074636,
+    "simulation_wall_ratio": 0.6505762142692576,
+    "sluice_water_balance_error_m3": 0.0,
+    "stored_water_m3": 13.095374301994212,
+    "terrain_fine_cells": 353,
+    "terrain_water_splats": 2771,
+    "wall_seconds": 20.033523709,
+    "warmup_seconds": 5,
+    "water_balance": {
+      "baseline_sim_time": 0.0,
+      "boundary_outflow_m3": 7.809742654135086,
+      "external_inflow_m3": 6.792000586166978,
+      "initial_stored_m3": 14.113124481402338,
+      "legacy_baseline": false
+    },
+    "water_balance_error_m3": -8.111440017444238e-06,
+    "water_mean_downstream_ms": 0.3922941982746124,
+    "water_particles": 106017,
+    "worker_busy_fraction": 0.9809088257485029,
+    "worker_mean_ms": 48.883234370646726,
+    "worker_packets": 402,
+    "worker_phases_mean_ms": [
+      2.289798495024874,
+      27.53866415920395,
+      12.059041383084589,
+      1.871752291044776,
+      2.5455067761194026
+    ]
+  },
+  "native_controls": {
+    "checks": [
+      "click requests mouse look while automated mode leaves desktop cursor free",
+      "mouse-right turns right immediately",
+      "one-frame W tap reaches authoritative worker",
+      "D strafes toward camera screen-right",
+      "help blocks held movement",
+      "help overlay does not move the player",
+      "New shift toolbar starts fresh operation",
+      "Tab enters the excavator through input handler",
+      "held boom/stick/curl keys operate machine joints",
+      "W/D drives and turns tracks",
+      "Tab exits onto walkable ground",
+      "Escape pauses with free cursor",
+      "pause stops authoritative simulation",
+      "Escape resumes simulation",
+      "Demo toolbar restores already-flowing finite paydirt",
+      "F5 saves live flowing demo",
+      "F9 restores the running particle simulation",
+      "gold ledger remains balanced after controls and restore"
+    ],
+    "gold_error_g": 5.002220859751105e-12,
+    "hopper_m3": 0.8049840781728159,
+    "input_source": "synthetic Bevy keyboard/mouse and toolbar interactions in native app; OS focus and key delivery are not exercised",
+    "passed": true,
+    "save_restored": true,
+    "water_particles": 105857
+  },
+  "native_capture": {
+    "airborne_water_particles": 11107,
+    "camera_traversal": false,
+    "detail_revision": 7,
+    "fluid_surface_ready": true,
+    "frames": 211,
+    "frozen": false,
+    "hydraulic_profile": "OriginalDemo",
+    "input_check_passed": true,
+    "ledger_error_g": 6.366462912410498e-12,
+    "mean_fps": 45.22579325585901,
+    "p95_frame_ms": 50.04425,
+    "particles_below_floor": 0,
+    "sampled_splats": 58792,
+    "save_restored": true,
+    "scenario": "flowing demo",
+    "simulation_time": 45.96666906401514,
+    "sluice_water_balance_error_m3": 0.0,
+    "terrain_fine_cells": 343,
+    "terrain_water_cells": 2765,
+    "wall_seconds": 22.276014542,
+    "water_balance_error_m3": -7.261474607389573e-06,
+    "water_mean_downstream_ms": 0.3964484632015228,
+    "water_particles": 106477,
+    "water_rendering": "anisotropic particle surface + optical thickness + connected terrain water"
+  },
+  "native_attempts": [
+    {
+      "attempt": "first throughput launch",
+      "exit_code": 0,
+      "receipt_produced": false,
+      "passed": false,
+      "note": "exited before producing a measurement; not counted as a passing benchmark; no new crash report"
+    }
+  ],
+  "remaining_gates": [
+    "closed momentum budget and local conservative phase exchange",
+    "dense-bed contact convergence and finite-radius penetration",
+    "matched physical geometry/matting and experimental assay",
+    "final slope/feed/parcel/grid sweeps",
+    "shape-dependent fine-gold drag",
+    "long-duration loading and independent holdouts",
+    "shaker-deck motion/aperture and stream validation"
+  ],
+  "workstation": {
+    "compiler_jobs": 1,
+    "task_heavy_jobs": "sequential",
+    "personal_browser_used": false,
+    "crash_baseline": "same six WindowServer reports; latest 2026-10-19; checked by bounded supervisors"
+  }
+}

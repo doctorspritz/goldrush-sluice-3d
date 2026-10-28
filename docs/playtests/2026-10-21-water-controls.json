@@ -1,0 +1,28 @@
+{
+  "checks": [
+    "click requests mouse look while automated mode leaves desktop cursor free",
+    "mouse-right turns right immediately",
+    "one-frame W tap reaches authoritative worker",
+    "D strafes toward camera screen-right",
+    "help blocks held movement",
+    "help overlay does not move the player",
+    "New shift toolbar starts fresh operation",
+    "Tab enters the excavator through input handler",
+    "held boom/stick/curl keys operate machine joints",
+    "W/D drives and turns tracks",
+    "Tab exits onto walkable ground",
+    "Escape pauses with free cursor",
+    "pause stops authoritative simulation",
+    "Escape resumes simulation",
+    "Demo toolbar restores already-flowing finite paydirt",
+    "F5 saves live flowing demo",
+    "F9 restores the running particle simulation",
+    "gold ledger remains balanced after controls and restore"
+  ],
+  "gold_error_g": 8.640199666842818e-12,
+  "hopper_m3": 0.8077680781728269,
+  "input_source": "synthetic Bevy keyboard/mouse and toolbar interactions in native app; OS focus and key delivery are not exercised",
+  "passed": true,
+  "save_restored": true,
+  "water_particles": 110035
+}

@@ -1,0 +1,138 @@
+{
+  "artifact_root": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/friction-stage-20261024",
+  "source_sha256": {
+    "crates/mining-sim/src/articulation/retained.rs": "601bf89c0f18824b93466fe894f9c6afa24aac87f9593ab4a1cfb60be7e443fa",
+    "crates/mining-sim/src/articulation/retained/tests.rs": "21f71c7ac65e7b2ad8e6decbcb6a629ff1052c15fb9cd94f7a4ef0b1340c7537",
+    "vendor/rapier3d/src/dynamics/solver/contact_constraint/contact_with_coulomb_friction.rs": "10415488bd1ad30ae609b8049cab4589eda8a642bd88c72c7d9760e49737c93e",
+    "vendor/rapier3d/src/dynamics/solver/contact_constraint/contact_with_twist_friction.rs": "8945dd4c346c5a4f671d77b7359fa093ac8c93e39d5a7ded058a997be4e6efa6",
+    "vendor/rapier3d/src/dynamics/solver/contact_constraint/generic_contact_constraint.rs": "422e3bd508bb3484fb0aa6647c23a6fb69b37a18a6b7a7f49666725e934469f9",
+    "vendor/rapier3d/src/dynamics/solver/staged_island_solver/worker.rs": "3b4c348304ce06797bd311704ab5cf3e44eb6c726426de0aeb481fd32a038ba2"
+  },
+  "full_trajectory": [
+    {
+      "policy": "legacy-regenerated-v3",
+      "steps": 300,
+      "maximum_step_energy_gain_j": 3584.1036867035727,
+      "worst_step": 300,
+      "violations_above_0_01_j": 21,
+      "net_energy_change_j": 655.8747056093416,
+      "all_steps_passivity_gate_passed": false
+    },
+    {
+      "policy": "fresh-current-final",
+      "steps": 300,
+      "maximum_step_energy_gain_j": 79.20565488058492,
+      "worst_step": 28,
+      "violations_above_0_01_j": 57,
+      "net_energy_change_j": -227.47287707577925,
+      "all_steps_passivity_gate_passed": false
+    }
+  ],
+  "checks": {
+    "featured-split-final-v3": {
+      "sha256": "c48094fecb67f3552266cec1a422f00f2cd0a7b30dfc0bd11c5975ad61f6f88c",
+      "completed_summaries": [
+        "test result: ok. 32 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 39.39s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+        "test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.94s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s",
+        "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.12s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+        "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.41s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s",
+        "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s",
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s"
+      ]
+    },
+    "remaining-fast-v4": {
+      "sha256": "34e75f49c2cacce1fdc0819f25b57e90d2c51ae49505d64be7a96bc9e43cf5af",
+      "completed_summaries": [
+        "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.56s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s",
+        "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.37s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s"
+      ]
+    },
+    "prepared-bank-v4": {
+      "sha256": "db03ab377d021235152f003fd88f1262b8df5bfde7dc986395b38eed11be282d",
+      "completed_summaries": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 114.36s"
+      ]
+    },
+    "whole-cycle-v4": {
+      "sha256": "14ce70b04bcc6c7bc9857d4d20f6bda66c614dfd135774da4468478295c144c7",
+      "completed_summaries": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 165.57s"
+      ]
+    },
+    "default-library-final-v3": {
+      "sha256": "99d9daf95af075d9392f8eb1b845ccf78ae69bef66cd46ea19079e9e98f39e41",
+      "completed_summaries": [
+        "test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s"
+      ]
+    },
+    "analytic-game-lock": {
+      "sha256": "6e89b61c394329e612058ba73600164b48a860514bf587556df737182cbefcda",
+      "completed_summaries": [
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 87 filtered out; finished in 0.00s"
+      ]
+    },
+    "policy-restore-v3": {
+      "sha256": "8315c6f16706a5835ec2a9d88cec630d8f3b67b3af4e366ea29858ce1f8b94ec",
+      "completed_summaries": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 34 filtered out; finished in 2.74s"
+      ]
+    },
+    "current-witness-final": {
+      "sha256": "9476abc7663b7e21483a46b0889419365be6dfe5e6801682a41ec28de8f5ca65",
+      "completed_summaries": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 34 filtered out; finished in 45.49s"
+      ]
+    },
+    "clippy-final-v4": {
+      "sha256": "3f462abbd124a751230db30bc2a0120e8b9241eb49ccdc88e7a0340138c3dad0",
+      "completed_summaries": []
+    },
+    "format-final-v4": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completed_summaries": []
+    },
+    "vendor-format-final-v4": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completed_summaries": []
+    },
+    "doctests-final-v4": {
+      "sha256": "1f3d418c7ebb69c42b854e64f8cc94c84d56c1832b0a086e4c1bf112e3b4edfa",
+      "completed_summaries": [
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    }
+  },
+  "completed_integration_tests": 147,
+  "featured_library_passed": 32,
+  "featured_library_ignored": 3,
+  "default_library_passed": 23,
+  "analytic_projection_tests_passed": 2,
+  "delayed_input_case_completed_in_interrupted_v3": true,
+  "interrupted_full_invocations_are_passes": false,
+  "whole_cycle_holds_litres": 4.218750167638063,
+  "whole_cycle_empties_litres": 0,
+  "legacy_original_owner_hashes_equal": {
+    "before.bin": true,
+    "after.bin": true
+  },
+  "final_current_four_owner_hashes_equal_v2": {
+    "before.bin": true,
+    "after.bin": true,
+    "worst-before.bin": true,
+    "worst-after.bin": true
+  },
+  "whole_window_passivity_passed": false,
+  "session_uses_experimental_owner": false,
+  "native_performance_checked": false,
+  "full_goal_complete": false
+}

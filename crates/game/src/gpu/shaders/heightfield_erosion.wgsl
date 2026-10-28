@@ -8,7 +8,8 @@ struct Params {
     tile_depth: u32,
     origin_x: u32,
     origin_z: u32,
-    _pad0: vec2<u32>,
+    open_boundaries: u32,
+    water_substeps: u32,
     cell_size: f32,
     dt: f32,
     gravity: f32,
@@ -33,7 +34,7 @@ const MIN_WATER_DEPTH: f32 = 0.001;      // Minimum water depth for calculations
 const EPSILON_FINE: f32 = 0.0001;        // Fine epsilon for numerical checks
 
 // Particle sizes (median diameter, meters)
-const D50_SEDIMENT: f32 = 0.0001;    // 0.1mm fine silt
+const D50_SEDIMENT: f32 = 0.0001;    // 0.1mm finest represented class
 const D50_OVERBURDEN: f32 = 0.001;   // 1mm coarse sand
 const D50_GRAVEL: f32 = 0.01;        // 10mm gravel
 const D50_PAYDIRT: f32 = 0.002;      // 2mm compacted sand
@@ -63,7 +64,7 @@ const MIN_EROSION_SPEED: f32 = 0.05;
 const MIN_EROSION_SLOPE: f32 = 0.0005;
 
 // Temporal stability parameters
-const STABILITY_BUILDUP_FRAMES: f32 = 30.0;  // Frames to reach max stability (~1 second at 30fps)
+const STABILITY_BUILDUP_MICROS: u32 = 1500000u; // Legacy 30 ticks at the game's 20Hz terrain rate
 const STABILITY_MULTIPLIER: f32 = 0.5;        // Max threshold multiplier (50% increase)
 const DBG_EROSION_GRAVEL: u32 = 6u;
 const DBG_EROSION_PAYDIRT: u32 = 7u;
@@ -95,8 +96,13 @@ const DBG_DEPOSITION_PAYDIRT: u32 = 11u;
 @group(2) @binding(3) var<storage, read_write> overburden: array<f32>;
 @group(2) @binding(4) var<storage, read_write> sediment: array<f32>;
 @group(2) @binding(5) var<storage, read_write> surface_material: array<u32>; // 0=bed,1=pay,2=gravel,3=over,4=sed
-@group(2) @binding(6) var<storage, read_write> settling_time: array<u32>; // frames since last disturbance
+@group(2) @binding(6) var<storage, read_write> settling_time: array<u32>; // wet-bed age in microseconds
 @group(2) @binding(7) var<storage, read_write> debug_stats: array<atomic<u32>>;
+@group(2) @binding(8) var<storage, read_write> bed_exchange_error: array<vec4<f32>>;
+// Actual positive reference-bulk thickness below the geometric f32 layer ULP.
+// It survives drying, readback, excavation and saves; it is not error feedback.
+@group(2) @binding(9) var<storage, read_write> bed_remainder: array<vec4<f32>>;
+
 
 // Determine what material is exposed on the surface based on layer thicknesses
 fn compute_surface_material(idx: u32) -> u32 {
@@ -252,631 +258,344 @@ fn debug_record_deposit(amount: f32, layer: u32) {
 // SHIELDS STRESS EROSION MODEL
 // =============================================================================
 
-// 1a. Settling only (prevents oscillation with erosion)
-@compute @workgroup_size(16, 16)
-fn update_settling(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let tile_x = global_id.x;
-    let tile_z = global_id.y;
-    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
-    let x = tile_x + params.origin_x;
-    let z = tile_z + params.origin_z;
-    if (x >= params.world_width || z >= params.world_depth) { return; }
-
-    let idx = get_idx(x, z);
-    let depth = water_depth[idx];
-
-    if (depth < MIN_WATER_DEPTH) {
-        return;
-    }
-
-    let vel_x = water_velocity_x[idx];
-    let vel_z = water_velocity_z[idx];
-    let slope = get_terrain_slope(x, z);
-    let u_star = shear_velocity(depth, slope, vel_x, vel_z, params.gravity);
-    let tau = shear_stress(u_star, params.rho_water);
-
-    // Only settle when Shields stress is below deposition threshold (hysteresis vs erosion)
-    // Use a smooth calm-water factor to avoid hard transitions.
-    let speed = sqrt(vel_x * vel_x + vel_z * vel_z);
-    let calm_factor = clamp(1.0 - speed / 0.2, 0.0, 1.0);
-    var updated_surface = false;
-
-    // Sediment settling (layer-specific)
-    var suspended = suspended_sediment[idx];
-    if (suspended > 0.0 && depth > 1e-4) {
-        let shields = shields_stress(
-            tau,
-            D50_SEDIMENT,
-            params.gravity,
-            params.rho_sediment,
-            params.rho_water,
-        );
-        let deposition_threshold = params.critical_shields * 0.4;
-        if (shields < deposition_threshold || calm_factor > 0.0) {
-            let v_settle = settling_velocity(
-                D50_SEDIMENT,
-                params.gravity,
-                params.rho_sediment,
-                params.rho_water,
-                params.water_viscosity,
-            );
-            let settling_rate = v_settle / depth;
-            var settled_frac = min(settling_rate * params.dt, 0.25);
-            let settle_boost = 0.04 * calm_factor;
-            settled_frac = max(settled_frac, settle_boost);
-            let settled_conc = suspended * settled_frac;
-            if (settled_conc > 1e-6) {
-                let deposit_height = settled_conc * depth;
-                // Only deposit if it's meaningful (>1mm) to prevent micro-topography oscillation
-                if (deposit_height > MIN_LAYER_THICKNESS) {
-                    debug_record_deposit(deposit_height, 4u);
-                    suspended -= settled_conc;
-                    sediment[idx] += deposit_height;
-                    suspended_sediment[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
-                    updated_surface = true;
-                }
-            }
-        }
-    }
-
-    // Overburden settling
-    suspended = suspended_overburden[idx];
-    if (suspended > 0.0 && depth > 1e-4) {
-        let shields = shields_stress(
-            tau,
-            D50_OVERBURDEN,
-            params.gravity,
-            params.rho_sediment,
-            params.rho_water,
-        );
-        let deposition_threshold = params.critical_shields * 0.5;
-        if (shields < deposition_threshold || calm_factor > 0.0) {
-            let v_settle = settling_velocity(
-                D50_OVERBURDEN,
-                params.gravity,
-                params.rho_sediment,
-                params.rho_water,
-                params.water_viscosity,
-            );
-            let settling_rate = v_settle / depth;
-            var settled_frac = min(settling_rate * params.dt, 0.25);
-            let settle_boost = 0.05 * calm_factor;
-            settled_frac = max(settled_frac, settle_boost);
-            let settled_conc = suspended * settled_frac;
-            if (settled_conc > 1e-6) {
-                let deposit_height = settled_conc * depth;
-                if (deposit_height > MIN_LAYER_THICKNESS) {
-                    debug_record_deposit(deposit_height, 3u);
-                    suspended -= settled_conc;
-                    overburden[idx] += deposit_height;
-                    suspended_overburden[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
-                    updated_surface = true;
-                }
-            }
-        }
-    }
-
-    // Gravel settling
-    suspended = suspended_gravel[idx];
-    if (suspended > 0.0 && depth > 1e-4) {
-        let shields = shields_stress(
-            tau,
-            D50_GRAVEL,
-            params.gravity,
-            params.rho_sediment,
-            params.rho_water,
-        );
-        let deposition_threshold = params.critical_shields * 0.8;
-        if (shields < deposition_threshold || calm_factor > 0.0) {
-            let v_settle = settling_velocity(
-                D50_GRAVEL,
-                params.gravity,
-                params.rho_sediment,
-                params.rho_water,
-                params.water_viscosity,
-            );
-            let settling_rate = v_settle / depth;
-            var settled_frac = min(settling_rate * params.dt, 0.35);
-            let settle_boost = 0.08 * calm_factor;
-            settled_frac = max(settled_frac, settle_boost);
-            let settled_conc = suspended * settled_frac;
-            if (settled_conc > 1e-6) {
-                let deposit_height = settled_conc * depth;
-                if (deposit_height > MIN_LAYER_THICKNESS) {
-                    debug_record_deposit(deposit_height, 2u);
-                    suspended -= settled_conc;
-                    gravel[idx] += deposit_height;
-                    suspended_gravel[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
-                    updated_surface = true;
-                }
-            }
-        }
-    }
-
-    // Paydirt settling
-    suspended = suspended_paydirt[idx];
-    if (suspended > 0.0 && depth > 1e-4) {
-        let shields = shields_stress(
-            tau,
-            D50_PAYDIRT,
-            params.gravity,
-            params.rho_sediment,
-            params.rho_water,
-        );
-        let deposition_threshold = params.critical_shields * 0.6;
-        if (shields < deposition_threshold || calm_factor > 0.0) {
-            let v_settle = settling_velocity(
-                D50_PAYDIRT,
-                params.gravity,
-                params.rho_sediment,
-                params.rho_water,
-                params.water_viscosity,
-            );
-            let settling_rate = v_settle / depth;
-            var settled_frac = min(settling_rate * params.dt, 0.25);
-            let settle_boost = 0.05 * calm_factor;
-            settled_frac = max(settled_frac, settle_boost);
-            let settled_conc = suspended * settled_frac;
-            if (settled_conc > 1e-6) {
-                let deposit_height = settled_conc * depth;
-                if (deposit_height > MIN_LAYER_THICKNESS) {
-                    debug_record_deposit(deposit_height, 1u);
-                    suspended -= settled_conc;
-                    paydirt[idx] += deposit_height;
-                    suspended_paydirt[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
-                    updated_surface = true;
-                }
-            }
-        }
-    }
-
-    if (updated_surface) {
-        surface_material[idx] = compute_surface_material(idx);
-        settling_time[idx] = 0u;  // Reset stability timer on new deposition
-    }
+// The existing transport targets are phase-local scratch after advection.
+// Cache old layers and slope before any invocation can modify geology. Slot 7
+// is independent of all water flux and exported-material ledger slots.
+fn exchange_slope(i: u32) -> f32 {
+    return suspended_sediment_next[params.world_width*params.world_depth+i*12u+7u];
+}
+@compute @workgroup_size(16,16)
+fn snapshot_bed_exchange(@builtin(global_invocation_id) g: vec3<u32>) {
+    if (g.x>=params.tile_width || g.y>=params.tile_depth) {return;}
+    let x=g.x+params.origin_x; let z=g.y+params.origin_z;
+    if (x>=params.world_width || z>=params.world_depth) {return;}
+    let i=get_idx(x,z);
+    suspended_sediment_next[i]=sediment[i];
+    suspended_overburden_next[i]=overburden[i];
+    suspended_gravel_next[i]=gravel[i];
+    suspended_paydirt_next[i]=paydirt[i];
+    suspended_sediment_next[params.world_width*params.world_depth+i*12u+7u]=get_terrain_slope(x,z);
 }
 
-// 1b. Erosion only (called after settling to prevent feedback)
-@compute @workgroup_size(16, 16)
-fn update_erosion(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let tile_x = global_id.x;
-    let tile_z = global_id.y;
-    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
-    let x = tile_x + params.origin_x;
-    let z = tile_z + params.origin_z;
-    if (x >= params.world_width || z >= params.world_depth) { return; }
-
-    let idx = get_idx(x, z);
-    let depth = water_depth[idx];
-    let had_water = depth > 0.001;
-    let ground_before = get_ground_height(idx);
-
-    if (depth < MIN_WATER_DEPTH) {
-        return;
+// A distinct pass must read the stored candidate. Computing (old+request)-old
+// within the writer can be reassociated to request by GPU fast-math, undoing
+// the f32 storage boundary that the material budget actually observes.
+fn stored_difference(a: f32, b: f32) -> f32 {
+    let ua=bitcast<u32>(a);let ub=bitcast<u32>(b);
+    let ea=(ua>>23u)&255u;let eb=(ub>>23u)&255u;
+    if (ea==0u || eb==0u || ea+1u<eb || eb+1u<ea) {return a-b;}
+    // Decode nearby positive values at their common binary exponent. This
+    // retains subtraction's rounding without letting fast-math replace the
+    // concentration delta with its nominal, unrounded transfer request.
+    let exponent=min(ea,eb);
+    let ma=((ua&0x7fffffu)|0x800000u)<<(ea-exponent);
+    let mb=((ub&0x7fffffu)|0x800000u)<<(eb-exponent);
+    return ldexp(f32(i32(ma)-i32(mb)),i32(exponent)-150);
+}
+fn concentration_after_exchange(concentration: f32, amount: f32, depth: f32) -> f32 {
+    let quotient=amount/depth;
+    // Metal may use an approximate reciprocal. Recover its product residual
+    // with a fused operation before rounding the concentration update.
+    let residual=fma(-quotient,depth,amount);
+    return (concentration-quotient)-residual/depth;
+}
+fn reconcile_layer(old: f32, stored: f32, concentration: f32, depth: f32, layer: u32, carry: f32) -> vec3<f32> {
+    var accepted=stored;
+    var actual=stored_difference(accepted,old);
+    if (actual==0.0) {return vec3(stored,concentration,carry);}
+    var next=concentration_after_exchange(concentration,actual-carry,depth);
+    for (var roundoff=0u;roundoff<8u && actual>0.0 && next<0.0;roundoff++) {
+        // At complete settling, rounding C*h and the stored sum can overdraw
+        // the last ULP of suspended material. Accept the next lower bed value
+        // rather than rolling the entire load back into suspension. The bit
+        // step cannot be reassociated with the candidate's nominal request.
+        accepted=bitcast<f32>(bitcast<u32>(accepted)-1u);
+        actual=stored_difference(accepted,old);
+        next=concentration_after_exchange(concentration,actual-carry,depth);
     }
-
-    let vel_x = water_velocity_x[idx];
-    let vel_z = water_velocity_z[idx];
-    
-    // Skip erosion in still water (prevent oscillation from numerical water sloshing)
-    let speed = sqrt(vel_x * vel_x + vel_z * vel_z);
-    if (speed < 0.05) {  // <5cm/s is effectively still water
-        return;
+    // Reject an unrepresentable recipient change or an overdrawn donor. Never
+    // remove bed material without adding it to water, or create a negative load.
+    if (next<0.0 || next==concentration || (stored>old && actual<=0.0)) {return vec3(old,concentration,carry);}
+    // Pick the representable recipient with the smallest actual exchange
+    // error. Approximate division and a rounded subtraction can otherwise
+    // choose the wrong side of a half-ULP boundary repeatedly.
+    let bits=bitcast<u32>(next);
+    var best_error=abs(fma(stored_difference(next,concentration),depth,actual-carry));
+    for (var direction=0u;direction<2u;direction++) {
+        if (direction==0u && bits==0u) {continue;}
+        let candidate=bitcast<f32>(select(bits+1u,bits-1u,direction==0u));
+        if ((actual>0.0 && candidate>=concentration) || (actual<0.0 && candidate<=concentration)) {continue;}
+        let error=abs(fma(stored_difference(candidate,concentration),depth,actual-carry));
+        if (error<best_error) {next=candidate;best_error=error;}
     }
-    
-    let slope = get_terrain_slope(x, z);
-    let u_star = shear_velocity(depth, slope, vel_x, vel_z, params.gravity);
-    let tau = shear_stress(u_star, params.rho_water);
-
-    var eroded_sediment = 0.0;
-    var eroded_gravel = 0.0;
-    var eroded_overburden = 0.0;
-    var eroded_paydirt = 0.0;
-    var updated_surface = false;
-
-    // EROSION ONLY (settling happens in separate pass)
-    // Erode ONLY the exposed (top) layer.
-    let critical = params.critical_shields;
-    let max_erosion = params.max_erosion_per_step * params.dt;
-    let surface = surface_material[idx];
-
-    if (critical > 0.0 && max_erosion > 0.0) {
-        var available = 0.0;
-        var d50_layer = 0.0;
-        var hardness = 1.0;
-
-        switch (surface) {
-            case 4u: { // sediment
-                available = sediment[idx];
-                d50_layer = get_d50(4u);
-                hardness = get_hardness(4u);
-            }
-            case 3u: { // overburden
-                available = overburden[idx];
-                d50_layer = get_d50(3u);
-                hardness = get_hardness(3u);
-            }
-            case 2u: { // gravel
-                available = gravel[idx];
-                d50_layer = get_d50(2u);
-                hardness = get_hardness(2u);
-            }
-            case 1u: { // paydirt
-                available = paydirt[idx];
-                d50_layer = get_d50(1u);
-                hardness = get_hardness(1u);
-            }
-            default: { }
-        }
-
-        if (available > 0.001 && d50_layer > 0.0) {
-            let shields_layer = shields_stress(
-                tau,
-                d50_layer,
-                params.gravity,
-                params.rho_sediment,
-                params.rho_water,
-            );
-            
-            // Apply temporal stability bonus
-            let time_settled = settling_time[idx];
-            let stability_progress = min(f32(time_settled) / STABILITY_BUILDUP_FRAMES, 1.0);
-            let stability_bonus = STABILITY_MULTIPLIER * stability_progress;
-            let effective_critical = critical * (1.0 + stability_bonus);
-            
-            if (shields_layer > effective_critical) {
-                let excess = (shields_layer - effective_critical) / effective_critical;
-                let erosion_rate = params.k_erosion * excess / hardness;
-                let erode_height = min(erosion_rate * params.dt, available);
-                let erode = min(erode_height, max_erosion);
-
-                switch (surface) {
-                    case 4u: {
-                        sediment[idx] -= erode;
-                        eroded_sediment += erode;
-                    }
-                    case 3u: {
-                        overburden[idx] -= erode;
-                        eroded_overburden += erode;
-                    }
-                    case 2u: {
-                        gravel[idx] -= erode;
-                        eroded_gravel += erode;
-                    }
-                    case 1u: {
-                        paydirt[idx] -= erode;
-                        eroded_paydirt += erode;
-                    }
-                    default: { }
-                }
-                
-                settling_time[idx] = 0u;  // Reset on erosion
-            } else {
-                // Increment stability counter (saturate at 255)
-                settling_time[idx] = min(settling_time[idx] + 1u, 255u);
-            }
-        }
+    if (actual>0.0) {
+        // A shallow new deposit can have much finer precision than its water
+        // concentration. Align that bed with the representable concentration
+        // change when doing so reduces the exchange residual. Keep full scour
+        // clears exact: leaving an unreceivable numerical film would falsely
+        // shield the stratum below on the next step.
+        let received=stored_difference(concentration,next);
+        let aligned=fma(received,depth,old+carry);
+        let error=abs(carry+fma(received,depth,-actual));
+        let aligned_error=abs(carry+fma(received,depth,-stored_difference(aligned,old)));
+        if (aligned>old && aligned_error<error) {accepted=aligned;actual=stored_difference(accepted,old);}
     }
-
-    let eroded_total = eroded_sediment + eroded_overburden + eroded_gravel + eroded_paydirt;
-    if (eroded_total > 0.0) {
-        debug_record_erosion(eroded_total, surface);
+    if (actual>0.0) {debug_record_deposit(actual,layer);}
+    // Carry the signed loss forward, so individually tiny rounding errors do
+    // not accumulate into a systematic material source or sink over time.
+    let error=carry+fma(stored_difference(concentration,next),depth,-actual);
+    return vec3(accepted,next,error);
+}
+fn reconcile_bed_exchange(g: vec3<u32>, advance_age: bool) {
+    if (g.x>=params.tile_width || g.y>=params.tile_depth) {return;}
+    let x=g.x+params.origin_x; let z=g.y+params.origin_z;
+    if (x>=params.world_width || z>=params.world_depth) {return;}
+    let i=get_idx(x,z); let h=water_depth[i];
+    if (h<MIN_WATER_DEPTH || params.dt<=0.0) {return;}
+    let old=vec4(suspended_sediment_next[i],suspended_overburden_next[i],suspended_gravel_next[i],suspended_paydirt_next[i]);
+    let carry=bed_exchange_error[i];
+    let a=reconcile_layer(old.x,sediment[i],suspended_sediment[i],h,4u,carry.x);
+    let b=reconcile_layer(old.y,overburden[i],suspended_overburden[i],h,3u,carry.y);
+    let c=reconcile_layer(old.z,gravel[i],suspended_gravel[i],h,2u,carry.z);
+    let d=reconcile_layer(old.w,paydirt[i],suspended_paydirt[i],h,1u,carry.w);
+    bed_exchange_error[i]=vec4(a.z,b.z,c.z,d.z);
+    sediment[i]=a.x; suspended_sediment[i]=a.y;
+    overburden[i]=b.x; suspended_overburden[i]=b.y;
+    gravel[i]=c.x; suspended_gravel[i]=c.y;
+    paydirt[i]=d.x; suspended_paydirt[i]=d.y;
+    let accepted=vec4(a.x,b.x,c.x,d.x);
+    let removed=max(old-accepted,vec4(0.0));
+    let total_removed=dot(removed,vec4(1.0));
+    if (total_removed>0.0 && debug_enabled()) {
+        // Count an eroded cell once, even if thin cover exposes another class.
+        debug_record_erosion(total_removed,0u);
+        if (removed.x>0.0) {atomicAdd(&debug_stats[DBG_EROSION_SEDIMENT],1u);}
+        if (removed.y>0.0) {atomicAdd(&debug_stats[DBG_EROSION_OVERBURDEN],1u);}
+        if (removed.z>0.0) {atomicAdd(&debug_stats[DBG_EROSION_GRAVEL],1u);}
+        if (removed.w>0.0) {atomicAdd(&debug_stats[DBG_EROSION_PAYDIRT],1u);}
     }
-
-    // Add eroded material to suspension (stored as CONCENTRATION)
-    if (depth > 1e-4) {
-        if (eroded_sediment > 0.0) {
-            let eroded_conc = eroded_sediment / depth;
-            let suspended = suspended_sediment[idx] + eroded_conc;
-            suspended_sediment[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
-            updated_surface = true;
-        }
-        if (eroded_overburden > 0.0) {
-            let eroded_conc = eroded_overburden / depth;
-            let suspended = suspended_overburden[idx] + eroded_conc;
-            suspended_overburden[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
-            updated_surface = true;
-        }
-        if (eroded_gravel > 0.0) {
-            let eroded_conc = eroded_gravel / depth;
-            let suspended = suspended_gravel[idx] + eroded_conc;
-            suspended_gravel[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
-            updated_surface = true;
-        }
-        if (eroded_paydirt > 0.0) {
-            let eroded_conc = eroded_paydirt / depth;
-            let suspended = suspended_paydirt[idx] + eroded_conc;
-            suspended_paydirt[idx] = clamp(suspended, 0.0, MAX_SUSPENDED);
-            updated_surface = true;
-        }
-    }
-
-    if (updated_surface) {
-        surface_material[idx] = compute_surface_material(idx);
+    if (any(accepted!=old)) {
+        surface_material[i]=compute_surface_material(i);
+        settling_time[i]=0u;
+    } else if (advance_age && any(accepted>vec4(0.0))) {
+        let elapsed=u32(round(min(params.dt,1.5)*1000000.0));
+        settling_time[i]=min(min(settling_time[i],STABILITY_BUILDUP_MICROS)+elapsed,STABILITY_BUILDUP_MICROS);
     }
 }
-
-// 2. Advect Sediment (Semi-Lagrangian)
-@compute @workgroup_size(16, 16)
-fn advect_sediment(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let tile_x = global_id.x;
-    let tile_z = global_id.y;
-    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
-    let x = tile_x + params.origin_x;
-    let z = tile_z + params.origin_z;
-    if (x >= params.world_width || z >= params.world_depth) { return; }
-    
-    let idx = get_idx(x, z);
-    
-    // Backtrack position
-    let u = water_velocity_x[idx];
-    let v = water_velocity_z[idx];
-    let dt = params.dt;
-    
-    let src_x = f32(x) - u * dt / params.cell_size;
-    let src_z = f32(z) - v * dt / params.cell_size;
-    
-    // Bilinear Interpolate suspended_sediment at (src_x, src_z)
-    // Boundary checks
-    if (src_x < 0.0 || src_x >= f32(params.world_width) - 1.0 || 
-        src_z < 0.0 || src_z >= f32(params.world_depth) - 1.0) {
-        
-        // Out of bounds: assumes 0 or clamp?
-        // Let's flow out.
-        // suspended_sediment[idx] = 0.0; // Clears buffer? No, output to new buffer?
-        // We need double buffering for correct advection!
-        // For V1, let's do simple forward Euler spread or just ignore advection to verify erosion first.
-        // Actually, without double buffering, this is racy.
-        return;
-    }
-    
-    // Accessing random other cells is racy if writing to same buffer.
-    // We need 'read' buffer (current) and 'write' buffer (next).
-    // The current setup has only one suspended buffer.
-    // For now, let's skip complex advection and trust water to carry it via flux?
-    // No, SWE flux carries water mass. Suspended mass must move with water.
-    // Let's implement correct Flux-Based Advection similar to Water Flux?
-    // Flux_Sediment = Flux_Water * Concentration.
-    // This is mass conservative and uses existing Flux buffers!
+@compute @workgroup_size(16,16)
+fn reconcile_erosion(@builtin(global_invocation_id) g: vec3<u32>) {
+    reconcile_bed_exchange(g,true);
 }
 
-@compute @workgroup_size(16, 16)
-fn update_sediment_transport(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    // Flux-Based Sediment Advection
-    // Transport = Water_Flux * Concentration_upwind
-    // Use upwind scheme: concentration from cell that flux flows FROM
-
-    let tile_x = global_id.x;
-    let tile_z = global_id.y;
-    if (tile_x >= params.tile_width || tile_z >= params.tile_depth) { return; }
-    let x = tile_x + params.origin_x;
-    let z = tile_z + params.origin_z;
-    if (x >= params.world_width || z >= params.world_depth) { return; }
-    let idx = get_idx(x, z);
-
-    let depth = water_depth[idx];
-    let cell_area = params.cell_size * params.cell_size;
-
-    // Sediment
-    var net_sediment = 0.0;
-    let local_conc = suspended_sediment[idx];
-
-    if (x > 0) {
-        let idx_left = get_idx(x - 1, z);
-        let fx = flux_x[idx_left];
-        if (fx > 0.0) {
-            let conc_left = suspended_sediment[idx_left];
-            net_sediment += fx * conc_left;
-        } else {
-            net_sediment += fx * local_conc;
+// Round a deposit into geometry without losing the unrepresentable part.
+// The bit-decoded stored difference prevents GPU fast-math from cancelling
+// the storage boundary. Product/addition residuals keep the small stock useful.
+// Decode the rounded positive value through its integer representation. Metal
+// fast-math may otherwise reassociate a*b and fma(a,b,-a*b), deleting the very
+// product residual needed to close a repeated material exchange budget.
+fn stored_positive(value:f32)->f32 {
+    let bits=bitcast<u32>(value);let exponent=(bits>>23u)&255u;
+    if (exponent==0u) {return ldexp(f32(bits&0x7fffffu),-149);}
+    return ldexp(f32((bits&0x7fffffu)|0x800000u),i32(exponent)-150);
+}
+fn addition_residual(high:f32,a:f32,b:f32)->f32 {
+    let big=max(a,b);let small=min(a,b);
+    // FastTwoSum orders operands so the decoded subtraction stays within
+    // Sterbenz's exact interval, even when a fresh deposit dwarfs the old bed.
+    let delta=stored_difference(high,big);
+    if (delta>=0.0) {return stored_difference(small,delta);}
+    return small-delta;
+}
+fn receive_deposit(old:f32,low:f32,before:f32,after:f32,depth:f32)->vec2<f32> {
+    let removed=stored_difference(before,after);
+    var concentration_error=0.0;
+    if (removed>before*0.5) {concentration_error=stored_difference(stored_difference(before,removed),after);}
+    let amount=stored_positive(removed*depth);
+    let product_error=fma(removed,depth,-amount)+concentration_error*depth;
+    return receive_height(old,low,amount,product_error);
+}
+fn receive_height(old:f32,low:f32,amount:f32,product_error:f32)->vec2<f32> {
+    let total=stored_positive(low+amount);
+    let addition_error=addition_residual(total,low,amount);
+    var high=stored_positive(old+total);
+    var remainder=addition_residual(high,old,total)+product_error+addition_error;
+    if (remainder<0.0 && high>0.0) {
+        high=bitcast<f32>(bitcast<u32>(high)-1u);
+        remainder=addition_residual(high,old,total)+product_error+addition_error;
+    }
+    return vec2(high,max(remainder,0.0));
+}
+fn settle_column(i:u32,h:f32) {
+    let before=vec4(suspended_sediment[i],suspended_overburden[i],suspended_gravel[i],suspended_paydirt[i]);
+    let diameters=vec4(D50_SEDIMENT,D50_OVERBURDEN,D50_GRAVEL,D50_PAYDIRT);
+    var after=before;
+    // Immutable stored layers from the phase snapshot, rather than a rounded
+    // candidate sum that would leave an unreceivable suspended tail.
+    var layers=vec4(suspended_sediment_next[i],suspended_overburden_next[i],suspended_gravel_next[i],suspended_paydirt_next[i]);
+    var low=bed_remainder[i];
+    for (var ch=0u;ch<4u;ch++) {
+        let ws=settling_velocity(diameters[ch],params.gravity,params.rho_sediment,params.rho_water,params.water_viscosity);
+        after[ch]=before[ch]*exp(-ws*params.dt/h);
+        if (after[ch]!=before[ch]) {
+            let received=receive_deposit(layers[ch],low[ch],before[ch],after[ch],h);
+            layers[ch]=received.x;low[ch]=received.y;
+            debug_record_deposit(stored_difference(before[ch],after[ch])*h,4u-ch);
         }
     }
+    sediment[i]=layers.x;overburden[i]=layers.y;gravel[i]=layers.z;paydirt[i]=layers.w;
+    suspended_sediment[i]=after.x;suspended_overburden[i]=after.y;suspended_gravel[i]=after.z;suspended_paydirt[i]=after.w;
+    bed_remainder[i]=low;
+    if (any(after!=before)) {settling_time[i]=0u;surface_material[i]=compute_surface_material(i);}
+}
+@compute @workgroup_size(16,16)
+fn update_settling(@builtin(global_invocation_id) g: vec3<u32>) {
+    if (g.x>=params.tile_width || g.y>=params.tile_depth || params.dt<=0.0) {return;}
+    let x=g.x+params.origin_x;let z=g.y+params.origin_z;
+    if (x>=params.world_width || z>=params.world_depth) {return;}
+    let i=get_idx(x,z);let h=water_depth[i];
+    if (h<=0.0) {return;}
+    // Same D=ws*C mixed-column balance at every positive water depth.
+    // The receiving bed has explicit sub-float inventory, so no depth gate or
+    // full-transfer rejection is needed to preserve the four class budgets.
+    settle_column(i,h);
+}
 
-    if (x < params.world_width - 1) {
-        let fx = flux_x[idx];
-        if (fx > 0.0) {
-            net_sediment -= fx * local_conc;
-        } else {
-            let idx_right = get_idx(x + 1, z);
-            let conc_right = suspended_sediment[idx_right];
-            net_sediment -= fx * conc_right;
+// Spend physical time removing each exposed stratum. A micrometre cover must
+// consume its own removal time, rather than shielding the next layer for a full
+// timestep. Coarse visual surface tags do not determine physical exposure.
+@compute @workgroup_size(16,16)
+fn update_erosion(@builtin(global_invocation_id) g: vec3<u32>) {
+    if (g.x>=params.tile_width || g.y>=params.tile_depth || params.dt<=0.0) {return;}
+    let x=g.x+params.origin_x; let z=g.y+params.origin_z;
+    if (x>=params.world_width || z>=params.world_depth) {return;}
+    let i=get_idx(x,z);let h=water_depth[i];
+    if (h<MIN_WATER_DEPTH || params.critical_shields<=0.0) {return;}
+    let vx=water_velocity_x[i];let vz=water_velocity_z[i];
+    if (sqrt(vx*vx+vz*vz)<MIN_EROSION_SPEED) {return;}
+    let tau=shear_stress(shear_velocity(h,exchange_slope(i),vx,vz,params.gravity),params.rho_water);
+    let progress=f32(min(settling_time[i],STABILITY_BUILDUP_MICROS))/f32(STABILITY_BUILDUP_MICROS);
+    let critical=params.critical_shields*(1.0+STABILITY_MULTIPLIER*progress);
+    var layers=vec4(sediment[i],overburden[i],gravel[i],paydirt[i]);
+    let loads=vec4(suspended_sediment[i],suspended_overburden[i],suspended_gravel[i],suspended_paydirt[i]);
+    var remaining=params.dt;
+    for (var layer=0u;layer<4u;layer++) {
+        let available=layers[layer];
+        if (available<=0.0) {continue;}
+        let material=4u-layer;
+        let shields=shields_stress(tau,get_d50(material),params.gravity,params.rho_sediment,params.rho_water);
+        let rate=min(params.k_erosion*max(shields/critical-1.0,0.0)/get_hardness(material),params.max_erosion_per_step);
+        if (rate<=0.0 || remaining<=0.0) {break;}
+        let requested=rate*remaining;
+        if (requested<available) {layers[layer]=available-requested;break;}
+        // A complete layer clear has an exact stored delta. Do not uncover the
+        // layer below when suspension cannot represent the receiving transfer.
+        if (loads[layer]+available/h==loads[layer]) {break;}
+        layers[layer]=0.0;
+        remaining=max(remaining-available/rate,0.0);
+    }
+    sediment[i]=layers.x;overburden[i]=layers.y;
+    gravel[i]=layers.z;paydirt[i]=layers.w;
+}
+
+// Residence-aware finite-volume transport. Each parcel may settle before its
+// face crossing and after arrival. Coefficients are frozen over the hydraulic
+// substep using its mean depth; water itself retains the original SWE scheme.
+fn concentrations(i:u32)->vec4<f32> {
+    return vec4(suspended_sediment[i],suspended_overburden[i],suspended_gravel[i],suspended_paydirt[i]);
+}
+fn old_depth(i:u32)->f32 {return suspended_sediment_next[params.world_width*params.world_depth+i*12u];}
+fn reaction(i:u32,ws:f32)->f32 {
+    let h=0.5*(old_depth(i)+water_depth[i]);
+    return ws*(params.dt/f32(max(params.water_substeps,1u)))/max(h,1e-30);
+}
+fn phi(r:f32)->f32 {
+    if (r<0.01) {return 1.0+r*(-0.5+r*(1.0/6.0+r*(-1.0/24.0+r/120.0)));}
+    return (1.0-exp(-r))/r;
+}
+fn transit_survival(a:f32,b:f32)->f32 {
+    return exp(-min(a,b))*phi(abs(a-b));
+}
+fn signed_stored(value:f32)->f32 {
+    if (value<0.0) {return -stored_positive(-value);}
+    return stored_positive(value);
+}
+fn signed_sum_error(sum:f32,a:f32,b:f32)->f32 {
+    let big=select(b,a,abs(a)>=abs(b));let small=select(a,b,abs(a)>=abs(b));
+    return signed_stored(small-signed_stored(sum-big));
+}
+fn add_height(state:vec2<f32>,value:f32)->vec2<f32> {
+    let sum=signed_stored(state.x+value);
+    let error=state.y+signed_sum_error(sum,state.x,value);
+    let high=signed_stored(sum+error);
+    return vec2(high,signed_sum_error(high,sum,error));
+}
+fn departing(i:u32,ch:u32,q_height:f32,ws:f32)->f32 {
+    // Both cells use the identical quantized interface amount.
+    let c=concentrations(i)[ch];
+    if (c<=0.0 || q_height<=0.0) {return 0.0;}
+    return stored_positive(c*q_height*phi(reaction(i,ws)));
+}
+@compute @workgroup_size(16,16)
+fn update_sediment_transport(@builtin(global_invocation_id) g:vec3<u32>) {
+    if (g.x>=params.tile_width || g.y>=params.tile_depth) {return;}
+    let x=g.x+params.origin_x;let z=g.y+params.origin_z;
+    if (x>=params.world_width || z>=params.world_depth) {return;}
+    let i=get_idx(x,z);let n=params.world_width*params.world_depth;
+    let a=n+i*12u;let area=params.cell_size*params.cell_size;
+    let h0=old_depth(i);let h1=water_depth[i];let local=concentrations(i);
+    if (params.dt<=0.0) {
+        suspended_sediment_next[i]=local.x;suspended_overburden_next[i]=local.y;
+        suspended_gravel_next[i]=local.z;suspended_paydirt_next[i]=local.w;return;
+    }
+    // Signed face volumes: positive leaves this donor, negative arrives.
+    var faces:array<f32,4>;var neighbours:array<u32,4>;
+    neighbours[0]=i;neighbours[1]=i;neighbours[2]=i;neighbours[3]=i;
+    if (x>0u) {faces[0]=-flux_x[i-1u];neighbours[0]=i-1u;}
+    if (x+1u<params.world_width) {faces[1]=flux_x[i];neighbours[1]=i+1u;}
+    if (z>0u) {faces[2]=-flux_z[i-params.world_width];neighbours[2]=i-params.world_width;}
+    if (z+1u<params.world_depth) {faces[3]=flux_z[i];neighbours[3]=i+params.world_width;}
+    let drain=suspended_sediment_next[a+2u];
+    var outgoing=drain;var movement=drain;
+    for (var face=0u;face<4u;face++) {outgoing+=max(faces[face],0.0);movement+=abs(faces[face]);}
+    let fraction=min(outgoing/max(h0*area,1e-30),1.0);
+    let sizes=vec4(D50_SEDIMENT,D50_OVERBURDEN,D50_GRAVEL,D50_PAYDIRT);
+    var layers=vec4(sediment[i],overburden[i],gravel[i],paydirt[i]);
+    var low=bed_remainder[i];var carry=bed_exchange_error[i];var after=local;
+    var deposited=false;
+    for (var ch=0u;ch<4u;ch++) {
+        let ws=settling_velocity(sizes[ch],params.gravity,params.rho_sediment,params.rho_water,params.water_viscosity);
+        let r=reaction(i,ws);
+        let old_mass=stored_positive(local[ch]*h0);
+        var mobile=old_mass*(1.0-fraction)*exp(-r);
+        var balance=add_height(vec2(old_mass,fma(local[ch],h0,-old_mass)),carry[ch]);
+        let exported=departing(i,ch,drain/area,ws);
+        balance=add_height(balance,-exported);
+        for (var face=0u;face<4u;face++) {
+            let q=faces[face]/area;let j=neighbours[face];
+            if (q>0.0) {balance=add_height(balance,-departing(i,ch,q,ws));}
+            else if (q<0.0) {
+                let received=departing(j,ch,-q,ws);
+                balance=add_height(balance,received);
+                mobile+=concentrations(j)[ch]*(-q)*transit_survival(reaction(j,ws),r);
+            }
         }
-    }
-
-    if (z > 0) {
-        let idx_back = get_idx(x, z - 1);
-        let fz = flux_z[idx_back];
-        if (fz > 0.0) {
-            let conc_back = suspended_sediment[idx_back];
-            net_sediment += fz * conc_back;
-        } else {
-            net_sediment += fz * local_conc;
+        after[ch]=0.0;
+        if (h1>0.0) {
+            after[ch]=stored_positive(max(mobile,0.0)/h1);
+            if (movement==0.0 && h0==h1) {after[ch]=stored_positive(local[ch]*exp(-r));}
         }
+        let represented=stored_positive(after[ch]*h1);
+        balance=add_height(balance,-represented);
+        balance=add_height(balance,-fma(after[ch],h1,-represented));
+        if (balance.x>0.0 || (balance.x==0.0 && balance.y>0.0)) {
+            let received=receive_height(layers[ch],low[ch],balance.x,balance.y);
+            layers[ch]=received.x;low[ch]=received.y;carry[ch]=0.0;deposited=true;
+        } else {carry[ch]=balance.x+balance.y;}
+        suspended_sediment_next[a+8u+ch]+=exported*area;
     }
-
-    if (z < params.world_depth - 1) {
-        let fz = flux_z[idx];
-        if (fz > 0.0) {
-            net_sediment -= fz * local_conc;
-        } else {
-            let idx_front = get_idx(x, z + 1);
-            let conc_front = suspended_sediment[idx_front];
-            net_sediment -= fz * conc_front;
-        }
-    }
-    if (depth > 1e-4) {
-        let delta_conc = net_sediment / (cell_area * depth);
-        let new_sed = local_conc + delta_conc;
-        suspended_sediment_next[idx] = clamp(new_sed, 0.0, MAX_SUSPENDED);
-    } else {
-        suspended_sediment_next[idx] = local_conc;
-    }
-
-    // Overburden
-    net_sediment = 0.0;
-    let local_over = suspended_overburden[idx];
-
-    if (x > 0) {
-        let idx_left = get_idx(x - 1, z);
-        let fx = flux_x[idx_left];
-        if (fx > 0.0) {
-            let conc_left = suspended_overburden[idx_left];
-            net_sediment += fx * conc_left;
-        } else {
-            net_sediment += fx * local_over;
-        }
-    }
-
-    if (x < params.world_width - 1) {
-        let fx = flux_x[idx];
-        if (fx > 0.0) {
-            net_sediment -= fx * local_over;
-        } else {
-            let idx_right = get_idx(x + 1, z);
-            let conc_right = suspended_overburden[idx_right];
-            net_sediment -= fx * conc_right;
-        }
-    }
-
-    if (z > 0) {
-        let idx_back = get_idx(x, z - 1);
-        let fz = flux_z[idx_back];
-        if (fz > 0.0) {
-            let conc_back = suspended_overburden[idx_back];
-            net_sediment += fz * conc_back;
-        } else {
-            net_sediment += fz * local_over;
-        }
-    }
-
-    if (z < params.world_depth - 1) {
-        let fz = flux_z[idx];
-        if (fz > 0.0) {
-            net_sediment -= fz * local_over;
-        } else {
-            let idx_front = get_idx(x, z + 1);
-            let conc_front = suspended_overburden[idx_front];
-            net_sediment -= fz * conc_front;
-        }
-    }
-
-    if (depth > 1e-4) {
-        let delta_conc = net_sediment / (cell_area * depth);
-        let new_sed = local_over + delta_conc;
-        suspended_overburden_next[idx] = clamp(new_sed, 0.0, MAX_SUSPENDED);
-    } else {
-        suspended_overburden_next[idx] = local_over;
-    }
-
-    // Gravel
-    net_sediment = 0.0;
-    let local_gravel = suspended_gravel[idx];
-
-    if (x > 0) {
-        let idx_left = get_idx(x - 1, z);
-        let fx = flux_x[idx_left];
-        if (fx > 0.0) {
-            let conc_left = suspended_gravel[idx_left];
-            net_sediment += fx * conc_left;
-        } else {
-            net_sediment += fx * local_gravel;
-        }
-    }
-
-    if (x < params.world_width - 1) {
-        let fx = flux_x[idx];
-        if (fx > 0.0) {
-            net_sediment -= fx * local_gravel;
-        } else {
-            let idx_right = get_idx(x + 1, z);
-            let conc_right = suspended_gravel[idx_right];
-            net_sediment -= fx * conc_right;
-        }
-    }
-
-    if (z > 0) {
-        let idx_back = get_idx(x, z - 1);
-        let fz = flux_z[idx_back];
-        if (fz > 0.0) {
-            let conc_back = suspended_gravel[idx_back];
-            net_sediment += fz * conc_back;
-        } else {
-            net_sediment += fz * local_gravel;
-        }
-    }
-
-    if (z < params.world_depth - 1) {
-        let fz = flux_z[idx];
-        if (fz > 0.0) {
-            net_sediment -= fz * local_gravel;
-        } else {
-            let idx_front = get_idx(x, z + 1);
-            let conc_front = suspended_gravel[idx_front];
-            net_sediment -= fz * conc_front;
-        }
-    }
-
-    if (depth > 1e-4) {
-        let delta_conc = net_sediment / (cell_area * depth);
-        let new_sed = local_gravel + delta_conc;
-        suspended_gravel_next[idx] = clamp(new_sed, 0.0, MAX_SUSPENDED);
-    } else {
-        suspended_gravel_next[idx] = local_gravel;
-    }
-
-    // Paydirt
-    net_sediment = 0.0;
-    let local_paydirt = suspended_paydirt[idx];
-
-    if (x > 0) {
-        let idx_left = get_idx(x - 1, z);
-        let fx = flux_x[idx_left];
-        if (fx > 0.0) {
-            let conc_left = suspended_paydirt[idx_left];
-            net_sediment += fx * conc_left;
-        } else {
-            net_sediment += fx * local_paydirt;
-        }
-    }
-
-    if (x < params.world_width - 1) {
-        let fx = flux_x[idx];
-        if (fx > 0.0) {
-            net_sediment -= fx * local_paydirt;
-        } else {
-            let idx_right = get_idx(x + 1, z);
-            let conc_right = suspended_paydirt[idx_right];
-            net_sediment -= fx * conc_right;
-        }
-    }
-
-    if (z > 0) {
-        let idx_back = get_idx(x, z - 1);
-        let fz = flux_z[idx_back];
-        if (fz > 0.0) {
-            let conc_back = suspended_paydirt[idx_back];
-            net_sediment += fz * conc_back;
-        } else {
-            net_sediment += fz * local_paydirt;
-        }
-    }
-
-    if (z < params.world_depth - 1) {
-        let fz = flux_z[idx];
-        if (fz > 0.0) {
-            net_sediment -= fz * local_paydirt;
-        } else {
-            let idx_front = get_idx(x, z + 1);
-            let conc_front = suspended_paydirt[idx_front];
-            net_sediment -= fz * conc_front;
-        }
-    }
-
-    if (depth > 1e-4) {
-        let delta_conc = net_sediment / (cell_area * depth);
-        let new_sed = local_paydirt + delta_conc;
-        suspended_paydirt_next[idx] = clamp(new_sed, 0.0, MAX_SUSPENDED);
-    } else {
-        suspended_paydirt_next[idx] = local_paydirt;
-    }
+    sediment[i]=layers.x;overburden[i]=layers.y;gravel[i]=layers.z;paydirt[i]=layers.w;
+    bed_remainder[i]=low;bed_exchange_error[i]=carry;
+    suspended_sediment_next[i]=after.x;suspended_overburden_next[i]=after.y;
+    suspended_gravel_next[i]=after.z;suspended_paydirt_next[i]=after.w;
+    if (deposited) {settling_time[i]=0u;surface_material[i]=compute_surface_material(i);}
 }

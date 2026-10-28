@@ -27,6 +27,7 @@ fn compute_sediment_fraction(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
+    if params.value < 0. { return; } // CPU volume-rasterised coarse DEM bed
     let idx = cell_index(i, j, k);
     let count = f32(atomicLoad(&sediment_count[idx]));
     let denom = max(params.value, 1.0);

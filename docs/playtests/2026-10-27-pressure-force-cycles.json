@@ -1,0 +1,443 @@
+{
+  "base_commit": "2ed4af9eb9c65842d8793004d9b35ed147d034fd",
+  "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/hydro-compatible-transport-20261027",
+  "scope": "Opt-in full-step work/transport trace and pressure-circulation lower bound using actual GPU projection coefficients. No numerical model, shader, sweep budget, field resolution or app update.",
+  "source_manifest": {
+    "crates/game/src/gpu/flip_3d.rs": "694221d1df74bac61102a7bb3105086b92451eb1b9bb761daf4c0e4de0964997",
+    "crates/mining-physics/examples/volume_hydrostatic.rs": "f83956375742e85df40a1634a0f69726d09ab3dd9998f1365d6518fff70f00fb",
+    "crates/mining-physics/examples/support/hydro_trace.rs": "8a0c8a5f461cd44d029633ad3137ca9087334faf7cb668b173045bf0b2249e54",
+    "crates/mining-physics/tests/conservative_runtime.rs": "69a33bde2841a79edba8bcf16fd6d42c64215f4a2deca78f2852690ad5e5bd87",
+    "docs/physics/phase-response.md": "44444d7bffde677e289494f1c10b8ed6c585b2247e984c474bd06c5f3f9de933"
+  },
+  "cycle_measurements": {
+    "alpha-0-n24-p2-hz240-iterations440-exact-exterior-trace": {
+      "samples": 21,
+      "time_s": 2.0000001043081284,
+      "particle_max_speed_mps": 0.03553512319922447,
+      "predictor_bound_mps": 0.014933192583210223,
+      "observed_face_max_on_cycle_mps": 0.026965515688061714,
+      "gravity_only_rest_bound_mps": 0.0013097780999192607,
+      "checked_cycles_total": 314874,
+      "minimum_velocity_bound_margin_mps": 0.0,
+      "maximum_gather_energy_excess_j": -1.3235773768053569e-15,
+      "maximum_abs_collision_kinetic_change_j": 0.0,
+      "pressure_relative_l2": 1.4356972218899453e-05,
+      "strongest_predictor_cycle": {
+        "axes": [
+          0,
+          1
+        ],
+        "bound_margin_mps": 0.012032323104851491,
+        "gravity_only_circulation_m2ps": -1.6242817449116076e-05,
+        "gravity_only_rest_speed_bound_mps": 0.0008513645823267388,
+        "inverse_mobility": [
+          0.9858347645391274,
+          1.0385022040884038,
+          0.8323501570713876,
+          0.9590266470729056
+        ],
+        "observed_max_face_speed_mps": 0.026965515688061714,
+        "origin_cell": [
+          17,
+          14,
+          18
+        ],
+        "predictor_circulation_m2ps": -0.0002849039366879472,
+        "predictor_mps": [
+          -0.00882792565971613,
+          -0.06707312911748886,
+          0.018244920298457146,
+          -0.03812599182128906
+        ],
+        "projected_mps": [
+          -0.009414705447852612,
+          -0.026965515688061714,
+          0.019383344799280167,
+          0.0037141493521630764
+        ],
+        "unavoidable_face_speed_mps": 0.014933192583210223
+      },
+      "strongest_gravity_cycle": {
+        "axes": [
+          0,
+          1
+        ],
+        "bound_margin_mps": 0.02724688707095377,
+        "gravity_only_circulation_m2ps": 2.6402784113825887e-05,
+        "gravity_only_rest_speed_bound_mps": 0.0013097780999192607,
+        "inverse_mobility": [
+          1.0194127669885864,
+          0.9920154926735955,
+          0.8990107311895532,
+          1.1212034233253956
+        ],
+        "observed_max_face_speed_mps": 0.04121314734220505,
+        "origin_cell": [
+          19,
+          14,
+          18
+        ],
+        "predictor_circulation_m2ps": 0.0002815348300922742,
+        "predictor_mps": [
+          0.005649735685437918,
+          -0.05183396488428116,
+          -0.015444806776940823,
+          -0.07856076955795288
+        ],
+        "projected_mps": [
+          0.0061887577176094055,
+          -0.010639643296599388,
+          -0.01595580205321312,
+          -0.04121314734220505
+        ],
+        "unavoidable_face_speed_mps": 0.013966260271251276
+      }
+    },
+    "alpha-1-n24-p2-hz240-iterations440-exact-exterior-trace": {
+      "samples": 21,
+      "time_s": 2.0000001043081284,
+      "particle_max_speed_mps": 0.01118614710867405,
+      "predictor_bound_mps": 0.0008125807007324874,
+      "observed_face_max_on_cycle_mps": 0.0020750469993799925,
+      "gravity_only_rest_bound_mps": 2.1705792358156236e-05,
+      "checked_cycles_total": 314874,
+      "minimum_velocity_bound_margin_mps": 0.0,
+      "maximum_gather_energy_excess_j": -2.10304409123466e-15,
+      "maximum_abs_collision_kinetic_change_j": 0.0,
+      "pressure_relative_l2": 1.4486380532297369e-05,
+      "strongest_predictor_cycle": {
+        "axes": [
+          1,
+          2
+        ],
+        "bound_margin_mps": 0.001262466298647505,
+        "gravity_only_circulation_m2ps": 4.138327211516723e-07,
+        "gravity_only_rest_speed_bound_mps": 2.1705792358156236e-05,
+        "inverse_mobility": [
+          0.983148338338377,
+          0.844676056780511,
+          0.985173207861648,
+          1.0001111154031224
+        ],
+        "observed_max_face_speed_mps": 0.0020750469993799925,
+        "origin_cell": [
+          1,
+          14,
+          1
+        ],
+        "predictor_circulation_m2ps": 1.549229242548702e-05,
+        "predictor_mps": [
+          -0.04097699746489525,
+          0.0020131457131356,
+          -0.04213028401136398,
+          -0.0001788226218195632
+        ],
+        "projected_mps": [
+          -8.281529881060123e-05,
+          0.0020750469993799925,
+          -0.001281864708289504,
+          -0.000164260680321604
+        ],
+        "unavoidable_face_speed_mps": 0.0008125807007324874
+      },
+      "strongest_gravity_cycle": {
+        "axes": [
+          1,
+          2
+        ],
+        "bound_margin_mps": 0.001262466298647505,
+        "gravity_only_circulation_m2ps": 4.138327211516723e-07,
+        "gravity_only_rest_speed_bound_mps": 2.1705792358156236e-05,
+        "inverse_mobility": [
+          0.983148338338377,
+          0.844676056780511,
+          0.985173207861648,
+          1.0001111154031224
+        ],
+        "observed_max_face_speed_mps": 0.0020750469993799925,
+        "origin_cell": [
+          1,
+          14,
+          1
+        ],
+        "predictor_circulation_m2ps": 1.549229242548702e-05,
+        "predictor_mps": [
+          -0.04097699746489525,
+          0.0020131457131356,
+          -0.04213028401136398,
+          -0.0001788226218195632
+        ],
+        "projected_mps": [
+          -8.281529881060123e-05,
+          0.0020750469993799925,
+          -0.001281864708289504,
+          -0.000164260680321604
+        ],
+        "unavoidable_face_speed_mps": 0.0008125807007324874
+      }
+    },
+    "alpha-1-n12-p2-hz120-iterations440-exact-sdf-trace": {
+      "samples": 12,
+      "time_s": 0.10000000521540642,
+      "particle_max_speed_mps": 0.008958999998867512,
+      "predictor_bound_mps": 7.076282347663735e-05,
+      "observed_face_max_on_cycle_mps": 0.0004255280364304781,
+      "gravity_only_rest_bound_mps": 3.4390471379305964e-05,
+      "checked_cycles_total": 12636,
+      "minimum_velocity_bound_margin_mps": 1.0787073477513953e-08,
+      "maximum_gather_energy_excess_j": -3.016903399296836e-08,
+      "maximum_abs_collision_kinetic_change_j": 0.0,
+      "pressure_relative_l2": 3.605751183198351e-06,
+      "strongest_predictor_cycle": {
+        "axes": [
+          1,
+          2
+        ],
+        "bound_margin_mps": 0.00035476521295384075,
+        "gravity_only_circulation_m2ps": -1.3745653872487472e-06,
+        "gravity_only_rest_speed_bound_mps": 3.4390471379305964e-05,
+        "inverse_mobility": [
+          0.9995962819810686,
+          0.999702303844094,
+          0.9979148564810276,
+          0.999723391772234
+        ],
+        "observed_max_face_speed_mps": 0.0004255280364304781,
+        "origin_cell": [
+          1,
+          4,
+          9
+        ],
+        "predictor_circulation_m2ps": -2.8283452931531677e-06,
+        "predictor_mps": [
+          -0.08163671940565109,
+          -2.1878040570300072e-05,
+          -0.08136986196041107,
+          -0.0001426435192115605
+        ],
+        "projected_mps": [
+          7.868744432926178e-05,
+          -3.3592910767765716e-05,
+          0.0004255280364304781,
+          -9.676319314166903e-05
+        ],
+        "unavoidable_face_speed_mps": 7.076282347663735e-05
+      },
+      "strongest_gravity_cycle": {
+        "axes": [
+          1,
+          2
+        ],
+        "bound_margin_mps": 0.00035476521295384075,
+        "gravity_only_circulation_m2ps": -1.3745653872487472e-06,
+        "gravity_only_rest_speed_bound_mps": 3.4390471379305964e-05,
+        "inverse_mobility": [
+          0.9995962819810686,
+          0.999702303844094,
+          0.9979148564810276,
+          0.999723391772234
+        ],
+        "observed_max_face_speed_mps": 0.0004255280364304781,
+        "origin_cell": [
+          1,
+          4,
+          9
+        ],
+        "predictor_circulation_m2ps": -2.8283452931531677e-06,
+        "predictor_mps": [
+          -0.08163671940565109,
+          -2.1878040570300072e-05,
+          -0.08136986196041107,
+          -0.0001426435192115605
+        ],
+        "projected_mps": [
+          7.868744432926178e-05,
+          -3.3592910767765716e-05,
+          0.0004255280364304781,
+          -9.676319314166903e-05
+        ],
+        "unavoidable_face_speed_mps": 7.076282347663735e-05
+      }
+    }
+  },
+  "checked_cycles_total": 642384,
+  "samples_total": 54,
+  "quality": [
+    {
+      "name": "default-hydro",
+      "exit": 0,
+      "wall_seconds": 2.0886887919987203
+    },
+    {
+      "name": "sdf-hydro",
+      "exit": 1,
+      "wall_seconds": 0.567199500001152
+    },
+    {
+      "name": "conservative_runtime",
+      "exit": 0,
+      "wall_seconds": 8.190377624996472
+    },
+    {
+      "name": "original_pipeline",
+      "exit": 0,
+      "wall_seconds": 36.07588145799673
+    },
+    {
+      "name": "clippy",
+      "exit": 101,
+      "wall_seconds": 4.6313394169992534
+    },
+    {
+      "name": "clippy-fixed",
+      "exit": 0,
+      "wall_seconds": 7.19544925000082
+    },
+    {
+      "name": "format",
+      "exit": 0,
+      "wall_seconds": 0.5639383330053533
+    },
+    {
+      "name": "engine-clippy",
+      "exit": 0,
+      "wall_seconds": 2.5989068749986473
+    },
+    {
+      "name": "exact-trace-build",
+      "exit": 0,
+      "wall_seconds": 21.965018874994712
+    },
+    {
+      "name": "exact-exterior",
+      "exit": 1,
+      "wall_seconds": 12.501549082997371
+    },
+    {
+      "name": "exact-sdf",
+      "exit": 1,
+      "wall_seconds": 0.5635351250020904
+    },
+    {
+      "name": "final-clippy",
+      "exit": 0,
+      "wall_seconds": 7.451864792004926
+    },
+    {
+      "name": "final-format",
+      "exit": 0,
+      "wall_seconds": 0.5658857910020743
+    },
+    {
+      "name": "flow-build",
+      "exit": 0,
+      "wall_seconds": 1.5785457500023767
+    },
+    {
+      "name": "full-ordinary-flow",
+      "exit": 0,
+      "wall_seconds": 7.158591332998185
+    }
+  ],
+  "cpu_bound_controls_passed": 2,
+  "real_runtime_controls_passed": 15,
+  "ordinary_pipeline_controls_passed": 5,
+  "engine_lint": {
+    "warnings": 98,
+    "warnings_in_changed_spans": [],
+    "changed_ranges": [
+      [
+        39,
+        45
+      ],
+      [
+        51,
+        51
+      ],
+      [
+        2814,
+        2814
+      ],
+      [
+        4407,
+        4418
+      ],
+      [
+        4783,
+        4865
+      ]
+    ]
+  },
+  "engine_changed_regions_formatted": true,
+  "physical_case_equivalence": {
+    "default-hydro": {
+      "cases": 12,
+      "passed": 12,
+      "entire_case_json_equal": true,
+      "previous_receipt": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/pressure-convergence-20261027/residual-exterior-short.json"
+    },
+    "exact-exterior": {
+      "cases": 2,
+      "passed": 0,
+      "entire_case_json_equal": true,
+      "previous_receipt": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/pressure-convergence-20261027/residual-exterior-2s.json"
+    },
+    "exact-sdf": {
+      "cases": 1,
+      "passed": 0,
+      "entire_case_json_equal": true,
+      "previous_receipt": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/pressure-convergence-20261027/residual-sdf-short.json"
+    }
+  },
+  "full_ordinary_state_equivalence": {
+    "raw_sha256": "57bd0a98601eefa85241e68a686cc8ff6ddaa36d07574b2776fe05b97f3068c8",
+    "canonical_sha256": "e6934203145f8f31f1ddb61d6fc1ccff5b0ad6a5a32caa25723c0bd7a827256d",
+    "raw_bytes": 31666203,
+    "canonical_bytes": 31661966,
+    "sim_time": 92.60000482946634,
+    "water": 116139,
+    "grains": 4430,
+    "comparison": "Exact canonical complete-state match to the prior ordinary solver; only three unordered contact-history maps are sorted.",
+    "input_sha256": "32acd1d5e9873f67f628df283712eca96c318a2f07780e1720fc6eaff0310e42"
+  },
+  "rejected_trial": {
+    "name": "C0 B2/B1 compatible-spline midpoint marker transport with unchanged FLIP velocity/affine update",
+    "runtime_tests_passed": 13,
+    "runtime_tests_failed": 2,
+    "force_free_angular_error_max": 8.258072603113965e-05,
+    "mixed_volume_angular_error_first_failure": 6.2870250345218766e-06,
+    "model_and_sources_restored": true,
+    "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/hydro-compatible-transport-20261027/rejected-compatible-transport",
+    "hydrostatic_matrix_not_run_after_conservation_refusal": true,
+    "independent_runtime_divergence_property_not_qualified": true
+  },
+  "source_denominator_trial": "Rejected analytically before implementation: replacing R by r in local correction violates closed-box source compatibility without a consistent advective term. No source shader change.",
+  "raw_snapshots": "Optional exact G2P velocity snapshot, single-use capped16MiB. Separate phase-status checks remain required. Explicit trace copies otherwise read existing moment/water/mobility/grid buffers. No default diagnostic GPU allocation/copy/dispatch.",
+  "native_app_unchanged_sha256": "c5d666f03066a5220d5520890e128c6e478714e6562c7af549aaed409ba1dce1",
+  "new_native_visual_or_performance_claim": false,
+  "full_96_case_matrix_not_repeated": "Physical algorithms unchanged;15complete case records match prior committed solver exactly, and the complete ordinary saved-state continuation matches canonically. Three sampled hydrostatic gates remain failed.",
+  "limitations": [
+    "The bound concerns scalar pressure with the frozen face coefficients and predictor of the measured step; it is not a lower bound over future timesteps or every possible discretisation.",
+    "Only fully occupied loop cells away from the existing floor-slip band/internal-floor tangent damping are measured; this is a sufficient interior witness, not a complete boundary audit.",
+    "Gravity-only circulation demonstrates an equilibrium obstruction for the measured particle quadrature; it does not uniquely attribute all currents or validate a replacement coupled model.",
+    "No calibrated dense-bed, partial-wetting, riffle/washout, hydraulic digging or real-time claim. Conservative mode remains opt-in.",
+    "The compatible-spline candidate is rejected as implemented; this does not rule out a jointly consistent advection/transfer scheme.",
+    "98existing engine lint warnings remain outside changed spans. Initial compile typo and maintained-crate lint finding were corrected; all final applicable gates pass."
+  ],
+  "full_goal_complete": false,
+  "beads": {
+    "bd_sync_supported": false,
+    "scoped_rows": [
+      "menace-d1l",
+      "menace-49t"
+    ],
+    "total_rows": 244,
+    "unrelated_literal_rows_preserved": 242
+  },
+  "cleanup": "agent_browser: processes=0 rss_mib=0.0\nplaywright_tests: processes=0 rss_mib=0.0\nplaywright_mcp: processes=0 rss_mib=0.0\nchrome_for_testing: processes=0 rss_mib=0.0\nnode_ecosystem: processes=0 rss_mib=0.0\n",
+  "new_crash_reports": [],
+  "original_dirty_files_preserved": true,
+  "user_stash_preserved": true,
+  "installed_app_preserved": true,
+  "sample_csv_sha256": "72ff8cb51d319f4421adc7e98099880b706e94a8aaf35116dd80a2c4b8fe10ee"
+}

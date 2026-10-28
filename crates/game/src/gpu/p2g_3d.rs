@@ -36,6 +36,8 @@ struct P2gParams3D {
 
 /// GPU-based Particle-to-Grid transfer for 3D simulation
 pub struct GpuP2g3D {
+    pub paired_water: bool,
+    pub volume_weights: Vec<f32>,
     width: u32,
     height: u32,
     depth: u32,
@@ -88,6 +90,40 @@ pub struct GpuP2g3D {
     scatter_workgroup_size: u32,
 }
 
+/// Fill wgpu's upload staging directly, without an intermediate padded vector.
+/// The view drops before returning, so the caller's next submit sees the write.
+/// Byte copies avoid assuming an alignment for the staging view.
+pub(super) fn write_particle_plane(
+    queue: &wgpu::Queue,
+    buffer: &wgpu::Buffer,
+    first: usize,
+    count: usize,
+    mut value: impl FnMut(usize) -> [f32; 4],
+) {
+    if count == 0 {
+        return;
+    }
+    let offset = u64::try_from(first)
+        .ok()
+        .and_then(|n| n.checked_mul(16))
+        .expect("particle upload offset overflow");
+    let bytes = u64::try_from(count)
+        .ok()
+        .and_then(|n| n.checked_mul(16))
+        .and_then(wgpu::BufferSize::new)
+        .expect("particle upload size overflow");
+    if let Some(mut staging) = queue.write_buffer_with(buffer, offset, bytes) {
+        for (i, slot) in staging.chunks_exact_mut(16).enumerate() {
+            slot.copy_from_slice(bytemuck::bytes_of(&value(i)));
+        }
+    } else {
+        // Retain the existing upload path if direct staging is unavailable.
+        // A failed staging request must never silently skip physical input.
+        let packed: Vec<_> = (0..count).map(value).collect();
+        queue.write_buffer(buffer, offset, bytemuck::cast_slice(&packed));
+    }
+}
+
 impl GpuP2g3D {
     /// Create a new GPU P2G 3D solver
     ///
@@ -109,9 +145,95 @@ impl GpuP2g3D {
         c_col1_buffer: Arc<wgpu::Buffer>,
         c_col2_buffer: Arc<wgpu::Buffer>,
     ) -> Self {
+        Self::new_with_options(
+            device,
+            width,
+            height,
+            depth,
+            max_particles,
+            include_sediment,
+            use_tiled_scatter,
+            positions_buffer,
+            velocities_buffer,
+            densities_buffer,
+            c_col0_buffer,
+            c_col1_buffer,
+            c_col2_buffer,
+            false,
+        )
+    }
+
+    /// Experimental repeated-Z transfer. Addresses wrap; APIC offsets remain local.
+    /// Uses the ordinary atomic scatter; tiled scatter is not periodic yet.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_periodic_z(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        max_particles: usize,
+        include_sediment: bool,
+        positions_buffer: Arc<wgpu::Buffer>,
+        velocities_buffer: Arc<wgpu::Buffer>,
+        densities_buffer: Arc<wgpu::Buffer>,
+        c_col0_buffer: Arc<wgpu::Buffer>,
+        c_col1_buffer: Arc<wgpu::Buffer>,
+        c_col2_buffer: Arc<wgpu::Buffer>,
+    ) -> Self {
+        Self::new_with_options(
+            device,
+            width,
+            height,
+            depth,
+            max_particles,
+            include_sediment,
+            false,
+            positions_buffer,
+            velocities_buffer,
+            densities_buffer,
+            c_col0_buffer,
+            c_col1_buffer,
+            c_col2_buffer,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_options(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        max_particles: usize,
+        include_sediment: bool,
+        use_tiled_scatter: bool,
+        positions_buffer: Arc<wgpu::Buffer>,
+        velocities_buffer: Arc<wgpu::Buffer>,
+        densities_buffer: Arc<wgpu::Buffer>,
+        c_col0_buffer: Arc<wgpu::Buffer>,
+        c_col1_buffer: Arc<wgpu::Buffer>,
+        c_col2_buffer: Arc<wgpu::Buffer>,
+        periodic_z: bool,
+    ) -> Self {
+        assert!(
+            !periodic_z || depth >= 2,
+            "periodic transfer needs at least two Z cells"
+        );
+        assert!(
+            !periodic_z || !use_tiled_scatter,
+            "tiled scatter is not periodic"
+        );
         let u_size = ((width + 1) * height * depth) as usize;
         let v_size = (width * (height + 1) * depth) as usize;
         let w_size = (width * height * (depth + 1)) as usize;
+
+        let allocated = |n: usize| {
+            if include_sediment {
+                n.div_ceil(64) * 64 + n
+            } else {
+                n
+            }
+        };
 
         // Create shader modules
         let scatter_shader = if use_tiled_scatter {
@@ -138,50 +260,54 @@ impl GpuP2g3D {
         // Create grid accumulator buffers (atomic i32)
         let u_sum_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D U Sum"),
-            size: (u_size * std::mem::size_of::<i32>()) as u64,
+            size: (allocated(u_size) * std::mem::size_of::<i32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let u_weight_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D U Weight"),
-            size: (u_size * std::mem::size_of::<i32>()) as u64,
+            size: (allocated(u_size) * std::mem::size_of::<i32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let v_sum_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D V Sum"),
-            size: (v_size * std::mem::size_of::<i32>()) as u64,
+            size: (allocated(v_size) * std::mem::size_of::<i32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let v_weight_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D V Weight"),
-            size: (v_size * std::mem::size_of::<i32>()) as u64,
+            size: (allocated(v_size) * std::mem::size_of::<i32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let w_sum_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D W Sum"),
-            size: (w_size * std::mem::size_of::<i32>()) as u64,
+            size: (allocated(w_size) * std::mem::size_of::<i32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let w_weight_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D W Weight"),
-            size: (w_size * std::mem::size_of::<i32>()) as u64,
+            size: (allocated(w_size) * std::mem::size_of::<i32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
+        // The water velocity plane is followed by an explicit support mask.
+        // Integer accumulators retain their original allocation and arithmetic.
+        let output_allocated = |n: usize| allocated(n) + n;
+
         // Create output grid buffers (f32)
         let grid_u_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D Grid U"),
-            size: (u_size * std::mem::size_of::<f32>()) as u64,
+            size: (output_allocated(u_size) * std::mem::size_of::<f32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
@@ -190,7 +316,7 @@ impl GpuP2g3D {
 
         let grid_v_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D Grid V"),
-            size: (v_size * std::mem::size_of::<f32>()) as u64,
+            size: (output_allocated(v_size) * std::mem::size_of::<f32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
@@ -199,7 +325,7 @@ impl GpuP2g3D {
 
         let grid_w_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("P2G 3D Grid W"),
-            size: (w_size * std::mem::size_of::<f32>()) as u64,
+            size: (output_allocated(w_size) * std::mem::size_of::<f32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
@@ -642,12 +768,28 @@ impl GpuP2g3D {
                 push_constant_ranges: &[],
             });
 
+        let mut scatter_constants = std::collections::HashMap::new();
+        if !use_tiled_scatter && std::env::var("SLUICE_REFERENCE_P2G_ATOMICS").as_deref() == Ok("1")
+        {
+            scatter_constants.insert("ELIDE_ZERO_ATOMICS".into(), 0.);
+        }
+        if periodic_z {
+            scatter_constants.insert("PERIODIC_Z".into(), 1.);
+        }
+        let periodic_constants = if periodic_z {
+            std::collections::HashMap::from([("PERIODIC_Z".into(), 1.)])
+        } else {
+            std::collections::HashMap::new()
+        };
         let scatter_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("P2G 3D Scatter Pipeline"),
             layout: Some(&scatter_pipeline_layout),
             module: &scatter_shader,
             entry_point: Some("scatter"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &scatter_constants,
+                ..Default::default()
+            },
             cache: None,
         });
 
@@ -663,7 +805,10 @@ impl GpuP2g3D {
             layout: Some(&divide_pipeline_layout),
             module: &divide_shader,
             entry_point: Some("divide_u"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &periodic_constants,
+                ..Default::default()
+            },
             cache: None,
         });
 
@@ -672,7 +817,10 @@ impl GpuP2g3D {
             layout: Some(&divide_pipeline_layout),
             module: &divide_shader,
             entry_point: Some("divide_v"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &periodic_constants,
+                ..Default::default()
+            },
             cache: None,
         });
 
@@ -681,11 +829,16 @@ impl GpuP2g3D {
             layout: Some(&divide_pipeline_layout),
             module: &divide_shader,
             entry_point: Some("divide_w"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &periodic_constants,
+                ..Default::default()
+            },
             cache: None,
         });
 
         Self {
+            paired_water: false,
+            volume_weights: Vec::new(),
             width,
             height,
             depth,
@@ -715,7 +868,7 @@ impl GpuP2g3D {
             scatter_bind_group,
             divide_bind_group,
             max_particles,
-            scatter_workgroup_size: 256,
+            scatter_workgroup_size: if use_tiled_scatter { 256 } else { 128 },
         }
     }
 
@@ -734,52 +887,39 @@ impl GpuP2g3D {
         let particle_count = positions.len().min(self.max_particles) as u32;
         let density_count = densities.len().min(self.max_particles);
 
-        // Convert to padded vec4 format for GPU
-        let positions_padded: Vec<[f32; 4]> = positions
-            .iter()
-            .take(particle_count as usize)
-            .map(|p| [p.x, p.y, p.z, 0.0])
-            .collect();
-
-        let velocities_padded: Vec<[f32; 4]> = velocities
-            .iter()
-            .take(particle_count as usize)
-            .map(|v| [v.x, v.y, v.z, 0.0])
-            .collect();
-
-        // Extract C matrix columns
-        let c_col0: Vec<[f32; 4]> = c_matrices
-            .iter()
-            .take(particle_count as usize)
-            .map(|c| [c.x_axis.x, c.x_axis.y, c.x_axis.z, 0.0])
-            .collect();
-
-        let c_col1: Vec<[f32; 4]> = c_matrices
-            .iter()
-            .take(particle_count as usize)
-            .map(|c| [c.y_axis.x, c.y_axis.y, c.y_axis.z, 0.0])
-            .collect();
-
-        let c_col2: Vec<[f32; 4]> = c_matrices
-            .iter()
-            .take(particle_count as usize)
-            .map(|c| [c.z_axis.x, c.z_axis.y, c.z_axis.z, 0.0])
-            .collect();
-
-        // Upload to GPU
-        queue.write_buffer(
-            &self.positions_buffer,
-            0,
-            bytemuck::cast_slice(&positions_padded),
-        );
-        queue.write_buffer(
+        let n = particle_count as usize;
+        write_particle_plane(queue, &self.positions_buffer, 0, n, |i| {
+            let p = positions[i];
+            [
+                p.x,
+                p.y,
+                p.z,
+                self.volume_weights.get(i).copied().unwrap_or(1.0),
+            ]
+        });
+        write_particle_plane(
+            queue,
             &self.velocities_buffer,
             0,
-            bytemuck::cast_slice(&velocities_padded),
+            velocities.len().min(n),
+            |i| {
+                let v = velocities[i];
+                [v.x, v.y, v.z, 0.0]
+            },
         );
-        queue.write_buffer(&self.c_col0_buffer, 0, bytemuck::cast_slice(&c_col0));
-        queue.write_buffer(&self.c_col1_buffer, 0, bytemuck::cast_slice(&c_col1));
-        queue.write_buffer(&self.c_col2_buffer, 0, bytemuck::cast_slice(&c_col2));
+        for (axis, buffer) in [
+            &self.c_col0_buffer,
+            &self.c_col1_buffer,
+            &self.c_col2_buffer,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write_particle_plane(queue, buffer, 0, c_matrices.len().min(n), |i| {
+                let c = c_matrices[i].col(axis);
+                [c.x, c.y, c.z, 0.0]
+            });
+        }
         if density_count > 0 {
             queue.write_buffer(
                 &self.densities_buffer,
@@ -801,7 +941,7 @@ impl GpuP2g3D {
             depth: self.depth,
             particle_count,
             include_sediment: if self.include_sediment { 1 } else { 0 },
-            _pad0: 0,
+            _pad0: u32::from(self.paired_water),
             _pad1: 0,
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
@@ -822,13 +962,24 @@ impl GpuP2g3D {
 
     /// Encode P2G compute passes into command encoder
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, particle_count: u32) {
+        self.encode_profiled(encoder, particle_count, None);
+    }
+
+    pub fn encode_profiled(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        particle_count: u32,
+        mut timer: Option<&mut super::timing::GpuStageTimer>,
+    ) {
         self.clear_accumulators(encoder);
 
         // Scatter pass
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("P2G 3D Scatter Pass"),
-                timestamp_writes: None,
+                timestamp_writes: timer
+                    .as_deref_mut()
+                    .map(|timer| timer.pass("P2G 3D Scatter Pass")),
             });
             pass.set_pipeline(&self.scatter_pipeline);
             pass.set_bind_group(0, &self.scatter_bind_group, &[]);
@@ -840,7 +991,9 @@ impl GpuP2g3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("P2G 3D Divide U Pass"),
-                timestamp_writes: None,
+                timestamp_writes: timer
+                    .as_deref_mut()
+                    .map(|timer| timer.pass("P2G 3D Divide U Pass")),
             });
             pass.set_pipeline(&self.divide_u_pipeline);
             pass.set_bind_group(0, &self.divide_bind_group, &[]);
@@ -854,7 +1007,9 @@ impl GpuP2g3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("P2G 3D Divide V Pass"),
-                timestamp_writes: None,
+                timestamp_writes: timer
+                    .as_deref_mut()
+                    .map(|timer| timer.pass("P2G 3D Divide V Pass")),
             });
             pass.set_pipeline(&self.divide_v_pipeline);
             pass.set_bind_group(0, &self.divide_bind_group, &[]);
@@ -868,7 +1023,7 @@ impl GpuP2g3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("P2G 3D Divide W Pass"),
-                timestamp_writes: None,
+                timestamp_writes: timer.map(|timer| timer.pass("P2G 3D Divide W Pass")),
             });
             pass.set_pipeline(&self.divide_w_pipeline);
             pass.set_bind_group(0, &self.divide_bind_group, &[]);

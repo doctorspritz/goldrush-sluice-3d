@@ -1,11 +1,13 @@
+override PERIODIC_Z: bool = false;
+override PHASE_RUNTIME_ALLOWED:bool=false;
+@group(0) @binding(8) var<storage,read> phase_status:array<u32>;
 // Density Position Correction Shader (3D) - Blub-Style Trilinear Sampling
 //
 // Particles sample position deltas from grid using trilinear interpolation
 // and apply corrections in-place on the positions buffer.
-// Uses offset positions for proper staggered grid sampling (blub approach):
-// - X delta sampled at pos - (0.5, 0, 0)
-// - Y delta sampled at pos - (0, 0.5, 0)
-// - Z delta sampled at pos - (0, 0, 0.5)
+// Forward differences at index (i,j,k) live on the POSITIVE cell faces:
+// - X: (i+1, j+0.5, k+0.5), cyclically for Y/Z.
+// These arrays are cell-sized, unlike the negative-face MAC velocity arrays.
 //
 // Based on: blub/density_projection_correct_particles.comp
 
@@ -35,6 +37,11 @@ const CELL_FLUID: u32 = 1u;
 const CELL_SOLID: u32 = 2u;
 const SEDIMENT_DENSITY_THRESHOLD: f32 = 1.0;
 
+fn periodic_k(k: i32) -> u32 {
+    if PERIODIC_Z { return u32(((k % i32(params.depth)) + i32(params.depth)) % i32(params.depth)); }
+    return u32(k);
+}
+
 fn cell_index(i: u32, j: u32, k: u32) -> u32 {
     return k * params.width * params.height + j * params.width + i;
 }
@@ -42,35 +49,35 @@ fn cell_index(i: u32, j: u32, k: u32) -> u32 {
 fn get_cell_type(i: i32, j: i32, k: i32) -> u32 {
     if (i < 0 || i >= i32(params.width)) { return CELL_AIR; }
     if (j < 0 || j >= i32(params.height)) { return CELL_AIR; }
-    if (k < 0 || k >= i32(params.depth)) { return CELL_AIR; }
-    return cell_type[cell_index(u32(i), u32(j), u32(k))];
+    if (!PERIODIC_Z && (k < 0 || k >= i32(params.depth))) { return CELL_AIR; }
+    return cell_type[cell_index(u32(i), u32(j), periodic_k(k))];
 }
 
 fn sample_delta_x(i: i32, j: i32, k: i32) -> f32 {
     if (i < 0 || i >= i32(params.width)) { return 0.0; }
     if (j < 0 || j >= i32(params.height)) { return 0.0; }
-    if (k < 0 || k >= i32(params.depth)) { return 0.0; }
-    return position_delta_x[cell_index(u32(i), u32(j), u32(k))];
+    if (!PERIODIC_Z && (k < 0 || k >= i32(params.depth))) { return 0.0; }
+    return position_delta_x[cell_index(u32(i), u32(j), periodic_k(k))];
 }
 
 fn sample_delta_y(i: i32, j: i32, k: i32) -> f32 {
     if (i < 0 || i >= i32(params.width)) { return 0.0; }
     if (j < 0 || j >= i32(params.height)) { return 0.0; }
-    if (k < 0 || k >= i32(params.depth)) { return 0.0; }
-    return position_delta_y[cell_index(u32(i), u32(j), u32(k))];
+    if (!PERIODIC_Z && (k < 0 || k >= i32(params.depth))) { return 0.0; }
+    return position_delta_y[cell_index(u32(i), u32(j), periodic_k(k))];
 }
 
 fn sample_delta_z(i: i32, j: i32, k: i32) -> f32 {
     if (i < 0 || i >= i32(params.width)) { return 0.0; }
     if (j < 0 || j >= i32(params.height)) { return 0.0; }
-    if (k < 0 || k >= i32(params.depth)) { return 0.0; }
-    return position_delta_z[cell_index(u32(i), u32(j), u32(k))];
+    if (!PERIODIC_Z && (k < 0 || k >= i32(params.depth))) { return 0.0; }
+    return position_delta_z[cell_index(u32(i), u32(j), periodic_k(k))];
 }
 
-// Trilinear interpolation for position delta X (offset by -0.5 in X)
+// Positive X face of a cell-centred pressure field.
 fn trilinear_delta_x(pos: vec3<f32>) -> f32 {
     // Sample position with offset for staggered grid
-    let sample_pos = max(vec3<f32>(0.0), pos - vec3<f32>(0.5, 0.0, 0.0));
+    let sample_pos = pos - vec3<f32>(1.0, 0.5, 0.5);
 
     // Get base cell coordinates
     let base_x = i32(floor(sample_pos.x));
@@ -104,9 +111,9 @@ fn trilinear_delta_x(pos: vec3<f32>) -> f32 {
     return mix(v0, v1, fz);
 }
 
-// Trilinear interpolation for position delta Y (offset by -0.5 in Y)
+// Positive Y face.
 fn trilinear_delta_y(pos: vec3<f32>) -> f32 {
-    let sample_pos = max(vec3<f32>(0.0), pos - vec3<f32>(0.0, 0.5, 0.0));
+    let sample_pos = pos - vec3<f32>(0.5, 1.0, 0.5);
 
     let base_x = i32(floor(sample_pos.x));
     let base_y = i32(floor(sample_pos.y));
@@ -136,9 +143,9 @@ fn trilinear_delta_y(pos: vec3<f32>) -> f32 {
     return mix(v0, v1, fz);
 }
 
-// Trilinear interpolation for position delta Z (offset by -0.5 in Z)
+// Positive Z face.
 fn trilinear_delta_z(pos: vec3<f32>) -> f32 {
-    let sample_pos = max(vec3<f32>(0.0), pos - vec3<f32>(0.0, 0.0, 0.5));
+    let sample_pos = pos - vec3<f32>(0.5, 0.5, 1.0);
 
     let base_x = i32(floor(sample_pos.x));
     let base_y = i32(floor(sample_pos.y));
@@ -170,13 +177,16 @@ fn trilinear_delta_z(pos: vec3<f32>) -> f32 {
 
 @compute @workgroup_size(256)
 fn correct_positions(@builtin(global_invocation_id) id: vec3<u32>) {
+    if PHASE_RUNTIME_ALLOWED && phase_status[0]!=0u {return;}
     let pid = id.x;
 
     if (pid >= params.particle_count) {
         return;
     }
 
-    // Apply density correction to ALL particles (including sediment)
+    if densities[pid] > 1.0 { return; }
+    // Volume repair applies to carrier water; DEM owns solid packing.
+    // Previously applied density correction to ALL particles (including sediment)
     // so they get pushed apart like water does.
     // Previously skipped sediment: if (densities[pid] > SEDIMENT_DENSITY_THRESHOLD) { return; }
 
@@ -200,8 +210,14 @@ fn correct_positions(@builtin(global_invocation_id) id: vec3<u32>) {
     let correction_scale: f32 = 1.0 / params.cell_size;  
     let delta = vec3<f32>(delta_x, delta_y, delta_z) * correction_scale;
 
-    let corrected = pos + delta;
-    positions[pid] = vec4<f32>(corrected, 1.0);
+    var corrected = pos + delta;
+    if PERIODIC_Z {
+        let period = f32(params.depth) * params.cell_size;
+        corrected.z -= floor(corrected.z / period) * period;
+        if corrected.z >= period { corrected.z = 0.; }
+        corrected.z = max(corrected.z, 0.);
+    }
+    positions[pid] = vec4<f32>(corrected, positions[pid].w);
 
     // Damp velocities slightly during position correction to bleed off jitter energy
     // and help the simulation reach a stable rest state.

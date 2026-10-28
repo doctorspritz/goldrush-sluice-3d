@@ -32,14 +32,10 @@ impl StagingBuffer {
         }
     }
 
-    fn copy_from(&self, encoder: &mut wgpu::CommandEncoder, src: &wgpu::Buffer, byte_size: u64) {
-        encoder.copy_buffer_to_buffer(src, 0, &self.buffer, 0, byte_size);
-    }
-
-    fn start_map(&mut self) {
+    fn start_map(&mut self, bytes: u64) {
         let (tx, rx) = mpsc::channel();
         self.buffer
-            .slice(..)
+            .slice(..bytes)
             .map_async(wgpu::MapMode::Read, move |result| {
                 let _ = tx.send(result);
             });
@@ -68,27 +64,6 @@ impl StagingBuffer {
         }
     }
 
-    fn read_vec3(&self, out: &mut [glam::Vec3], count: usize) {
-        let data = self.buffer.slice(..).get_mapped_range();
-        let slice: &[[f32; 4]] = bytemuck::cast_slice(&data);
-        for i in 0..count {
-            out[i] = glam::Vec3::new(slice[i][0], slice[i][1], slice[i][2]);
-        }
-    }
-
-    fn read_vec3_to_mat3_axis(
-        &self,
-        out: &mut [glam::Mat3],
-        count: usize,
-        axis: fn(&mut glam::Mat3) -> &mut glam::Vec3,
-    ) {
-        let data = self.buffer.slice(..).get_mapped_range();
-        let slice: &[[f32; 4]] = bytemuck::cast_slice(&data);
-        for i in 0..count {
-            *axis(&mut out[i]) = glam::Vec3::new(slice[i][0], slice[i][1], slice[i][2]);
-        }
-    }
-
     fn unmap(&self) {
         self.buffer.unmap();
     }
@@ -103,13 +78,11 @@ enum ReadyState {
 
 /// Double-buffered async readback slot for particle data.
 ///
-/// Handles positions (Vec3), velocities (Vec3), and APIC C matrix columns.
+/// Five planar copies share one mapping and completion callback. The bound
+/// is 80 bytes per particle plus a 16-byte refusal-status tail. Status is
+/// inspected before exposing any position, velocity or APIC output.
 pub(crate) struct ReadbackSlot {
-    positions: StagingBuffer,
-    velocities: StagingBuffer,
-    c_col0: StagingBuffer,
-    c_col1: StagingBuffer,
-    c_col2: StagingBuffer,
+    data: StagingBuffer,
     capacity: usize,
     count: usize,
     pending: bool,
@@ -119,11 +92,7 @@ impl ReadbackSlot {
     pub fn new(device: &wgpu::Device, max_particles: usize) -> Self {
         let buffer_size = (max_particles * std::mem::size_of::<[f32; 4]>()) as u64;
         Self {
-            positions: StagingBuffer::new(device, "Readback Positions Staging", buffer_size),
-            velocities: StagingBuffer::new(device, "Readback Velocities Staging", buffer_size),
-            c_col0: StagingBuffer::new(device, "Readback C Col0 Staging", buffer_size),
-            c_col1: StagingBuffer::new(device, "Readback C Col1 Staging", buffer_size),
-            c_col2: StagingBuffer::new(device, "Readback C Col2 Staging", buffer_size),
+            data: StagingBuffer::new(device, "Particle readback staging", buffer_size * 5 + 16),
             capacity: max_particles,
             count: 0,
             pending: false,
@@ -137,48 +106,61 @@ impl ReadbackSlot {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        positions: &wgpu::Buffer,
-        velocities: &wgpu::Buffer,
-        c_col0: &wgpu::Buffer,
-        c_col1: &wgpu::Buffer,
-        c_col2: &wgpu::Buffer,
+        sources: [&wgpu::Buffer; 5],
+        status: Option<&wgpu::Buffer>,
+        first: usize,
         count: usize,
     ) -> bool {
-        if self.pending {
-            return false;
-        }
-
-        let count = count.min(self.capacity);
-        if count == 0 {
-            return false;
-        }
-
-        let byte_size = (count * std::mem::size_of::<[f32; 4]>()) as u64;
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Readback Copy Encoder"),
         });
-
-        self.positions.copy_from(&mut encoder, positions, byte_size);
-        self.velocities.copy_from(&mut encoder, velocities, byte_size);
-        self.c_col0.copy_from(&mut encoder, c_col0, byte_size);
-        self.c_col1.copy_from(&mut encoder, c_col1, byte_size);
-        self.c_col2.copy_from(&mut encoder, c_col2, byte_size);
-
-        queue.submit(std::iter::once(encoder.finish()));
-
-        self.count = count;
-        self.pending = true;
-
-        self.positions.start_map();
-        self.velocities.start_map();
-        self.c_col0.start_map();
-        self.c_col1.start_map();
-        self.c_col2.start_map();
-
+        if !self.encode_copy(&mut encoder, sources, status, first, count) {
+            return false;
+        }
+        queue.submit(Some(encoder.finish()));
+        self.begin_map();
         true
     }
 
-    /// Try to read the staged data if all buffers are mapped.
+    /// Append copies after the producer passes, then map only after submission.
+    pub fn encode_copy(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        sources: [&wgpu::Buffer; 5],
+        status: Option<&wgpu::Buffer>,
+        first: usize,
+        count: usize,
+    ) -> bool {
+        if self.pending || first >= self.capacity || count == 0 {
+            return false;
+        }
+        let count = count.min(self.capacity - first);
+        let byte_size = (count * 16) as u64;
+        let first_byte = (first * 16) as u64;
+        for (plane, source) in sources.into_iter().enumerate() {
+            encoder.copy_buffer_to_buffer(
+                source,
+                first_byte,
+                &self.data.buffer,
+                plane as u64 * byte_size,
+                byte_size,
+            );
+        }
+        if let Some(status) = status {
+            encoder.copy_buffer_to_buffer(status, 0, &self.data.buffer, byte_size * 5, 16);
+        } else {
+            encoder.clear_buffer(&self.data.buffer, byte_size * 5, Some(16));
+        }
+        self.count = count;
+        self.pending = true;
+        true
+    }
+
+    pub fn begin_map(&mut self) {
+        self.data.start_map((self.count * 80 + 16) as u64);
+    }
+
+    /// Try to read all five staged planes from one completed mapping.
     ///
     /// Returns None if not ready or failed, Some(count) on success.
     pub fn try_read(
@@ -186,34 +168,19 @@ impl ReadbackSlot {
         positions_out: &mut [glam::Vec3],
         velocities_out: &mut [glam::Vec3],
         c_matrices_out: &mut [glam::Mat3],
-    ) -> Option<usize> {
+    ) -> Option<(usize, u32)> {
         if !self.pending {
             return None;
         }
 
-        let states = [
-            self.positions.check_ready(),
-            self.velocities.check_ready(),
-            self.c_col0.check_ready(),
-            self.c_col1.check_ready(),
-            self.c_col2.check_ready(),
-        ];
-
-        let failed = states.iter().any(|s| *s == ReadyState::Failed);
-        let all_ready = states.iter().all(|s| *s == ReadyState::Ready);
-
-        if failed {
-            self.pending = false;
-            self.positions.unmap();
-            self.velocities.unmap();
-            self.c_col0.unmap();
-            self.c_col1.unmap();
-            self.c_col2.unmap();
-            return None;
-        }
-
-        if !all_ready {
-            return None;
+        match self.data.check_ready() {
+            ReadyState::Failed => {
+                self.pending = false;
+                self.data.unmap();
+                return None;
+            }
+            ReadyState::Pending => return None,
+            ReadyState::Ready => {}
         }
 
         let count = self
@@ -222,31 +189,35 @@ impl ReadbackSlot {
             .min(velocities_out.len())
             .min(c_matrices_out.len());
 
-        self.positions.read_vec3(positions_out, count);
-        self.positions.unmap();
-
-        self.velocities.read_vec3(velocities_out, count);
-        self.velocities.unmap();
-
-        self.c_col0
-            .read_vec3_to_mat3_axis(c_matrices_out, count, |m| &mut m.x_axis);
-        self.c_col0.unmap();
-
-        self.c_col1
-            .read_vec3_to_mat3_axis(c_matrices_out, count, |m| &mut m.y_axis);
-        self.c_col1.unmap();
-
-        self.c_col2
-            .read_vec3_to_mat3_axis(c_matrices_out, count, |m| &mut m.z_axis);
-        self.c_col2.unmap();
+        let status;
+        {
+            let bytes = self
+                .data
+                .buffer
+                .slice(..(self.count * 80 + 16) as u64)
+                .get_mapped_range();
+            let data_bytes = self.count * 80;
+            status = *bytemuck::from_bytes::<u32>(&bytes[data_bytes..data_bytes + 4]);
+            let planes: &[[f32; 4]] = bytemuck::cast_slice(&bytes[..data_bytes]);
+            let vector = |plane: usize, i: usize| {
+                let v = planes[plane * self.count + i];
+                glam::Vec3::new(v[0], v[1], v[2])
+            };
+            for i in 0..if status == 0 { count } else { 0 } {
+                positions_out[i] = vector(0, i);
+                velocities_out[i] = vector(1, i);
+                c_matrices_out[i] = glam::Mat3::from_cols(vector(2, i), vector(3, i), vector(4, i));
+            }
+        }
+        self.data.unmap();
 
         self.pending = false;
         self.count = 0;
-        Some(count)
+        Some((count, status))
     }
 
     /// Returns true if a readback is currently pending.
-    pub fn _is_pending(&self) -> bool {
+    pub fn is_pending(&self) -> bool {
         self.pending
     }
 }

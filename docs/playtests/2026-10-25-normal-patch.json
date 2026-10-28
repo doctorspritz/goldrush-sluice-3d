@@ -1,0 +1,104 @@
+{
+  "checks": [
+    {
+      "check": "patch-qualified-final",
+      "exit": 0,
+      "elapsed": 9.066853915981483
+    },
+    {
+      "check": "default-tests-final",
+      "exit": 0,
+      "elapsed": 0.5762055419618264
+    },
+    {
+      "check": "audit-tests-final",
+      "exit": 0,
+      "elapsed": 89.14876804099185
+    },
+    {
+      "check": "clippy-final",
+      "exit": 0,
+      "elapsed": 6.7450916660018265
+    },
+    {
+      "check": "format-final",
+      "exit": 0,
+      "elapsed": 0.5617816669982858
+    },
+    {
+      "check": "saved-default-final",
+      "exit": 0,
+      "elapsed": 0.8182439590455033
+    }
+  ],
+  "new_material_tests": 10,
+  "default_library_tests": 33,
+  "audit_library_tests": 75,
+  "ordinary_audit_diagnostics_ignored": 22,
+  "material_law": {
+    "pressure": "max(0,-(M/L)*gap-(viscosity/L)*normal_relative_velocity) on nonpositive gap; zero when open",
+    "elastic_energy": "0.5*(M/L)*integral(min(gap,0)^2 d(reference_area))",
+    "reference_area": "fixed material patch, not projected opposing-plane area",
+    "opposing_geometry": "unbounded rigid plane attached to body B"
+  },
+  "gradient_world_dofs": 12,
+  "worst_relative_gradient_error": 2.1113833511071724e-08,
+  "mixed_power_cases": 15,
+  "worst_relative_power_closure": 1.5474128762831386e-16,
+  "mesh_triangles": [
+    2,
+    8,
+    32,
+    128,
+    512,
+    2048
+  ],
+  "worst_relative_mesh_scalar_error": 2.3251364936777887e-13,
+  "corner_spring_rotational_stiffness_over_integral": 3,
+  "zero_pressure_area_negative_control_reproduced": true,
+  "duplicate_material_domain_negative_control_reproduced": true,
+  "saved_baseline_reference_byte_exact": true,
+  "saved_baseline_mechanical_energy_gain_j": 57.216923396044876,
+  "unchanged_mechanical_gate_j": 0.01,
+  "saved_baseline_physical_gate_passed": false,
+  "changed_sources": [
+    "crates/mining-sim/src/lib.rs",
+    "crates/mining-sim/src/soil_response.rs",
+    "crates/mining-sim/src/soil_response/tests.rs"
+  ],
+  "unchanged_initial_sources": 639,
+  "preserved_installed_app_sha256": "13d4e20256f0c8b6c0cd1fa2f9a03e6c57820fcc4b8c5b7fe9396787eca3a892",
+  "preserved_original_dirty_files": 9,
+  "preserved_user_stash": [
+    "a6c6b857da29269271eebb03025767414eabde90"
+  ],
+  "new_crash_reports": [],
+  "coupled_to_live_soil": false,
+  "soil_values_calibrated": false,
+  "gameplay_adopted": false,
+  "full_goal_complete": false,
+  "limits": [
+    "Reference material patch against an unbounded plane only.",
+    "No finite opposing footprint, bulk constitutive law, yield, shear, cohesion, pore pressure or contact ownership/activation.",
+    "Instantaneous energy/power consistency is not discrete coupled-step passivity.",
+    "No patch strain credit is added to the existing bank.",
+    "No new native/GPU/FPS, full-bank trial or performance claim."
+  ],
+  "references": [
+    "https://docs.lammps.org/pair_granular.html",
+    "https://docs.software.vt.edu/abaqusv2025/English/SIMACAEITNRefMap/simaitn-c-expcontactconstraints.htm"
+  ],
+  "worst-before.bin_sha256": "7147a81a9830b2d27fcfca6feef4ef419ef8a09fede2899a7ab6e02af7c8db0b",
+  "worst-after.bin_sha256": "6f54234a1ed418414b2fd4abb10e8c1614411668c0e8275f21532fe29c4d7dc9",
+  "beads": {
+    "sync_supported": false,
+    "updated_rows": [
+      "sluice-rigid-bias-work-20261024"
+    ],
+    "new_rows": [
+      "menace-sluice-normal-patch-coupling-20261025"
+    ],
+    "exported_lines": 226,
+    "native_database_prefix_preserved": true
+  }
+}

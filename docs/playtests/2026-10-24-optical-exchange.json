@@ -1,0 +1,319 @@
+{
+  "scope": "Conservative, continuously supported display-ray optical exchange. Broader water art and the full mining-game goal remain active.",
+  "baseline_head": "ac619b2cd9ce1973bd9a50ae5424542fb3ed6c7a",
+  "old_finite_sheet_water_ray_moment_loss_fraction": 0.10531025044496967,
+  "old_staged_sediment_ray_moment_loss_fraction": 0.28267121344220403,
+  "old_staged_test_adapter": "Original production smooth_surface body plus new geometry-name alias and two identity optical slots, reproducing four original filters. Core shader bytes remain unchanged.",
+  "old_final_grazing_extinction_m1": 65.6876,
+  "new_final_grazing_extinction_m1": 160.87285,
+  "unchanged_final_visible_crest_bound_m1": 200,
+  "new_max_finite_and_independent_film_sum_error": 5.713028172760204e-08,
+  "new_wet_texel_birth_relative_existing_column_change": [
+    0.0,
+    0.0
+  ],
+  "new_staged_grazing_ray_moment_sum_errors": [
+    0.0,
+    7.596670403842154e-09
+  ],
+  "optical_impulse_rms_m": 0.014132775917165469,
+  "rms_bound_m": 0.027293879687068503,
+  "original_geometry_filters": 4,
+  "conservative_optical_exchanges": 4,
+  "shared_fullscreen_draws": 6,
+  "extra_draws": 2,
+  "new_targets_or_physical_particles": 0,
+  "quality": [
+    {
+      "name": "format",
+      "exit": 0
+    },
+    {
+      "name": "gpu",
+      "exit": 0
+    },
+    {
+      "name": "app",
+      "exit": 0
+    },
+    {
+      "name": "clippy",
+      "exit": 0
+    },
+    {
+      "name": "format-check",
+      "exit": 0
+    },
+    {
+      "name": "package",
+      "exit": 0
+    }
+  ],
+  "application_checks": {
+    "passed": 51,
+    "ignored": 1
+  },
+  "explicit_real_gpu_optics_checks_passed": 10,
+  "source_proof": {
+    "tested_source_hashes": 746,
+    "authoritative_solver_sources_identical": 322,
+    "original_depth_filter_body_identical": true,
+    "original_depth_filter_body_sha256": "218902264d008428396dc3255fbbbd0bbb8a4c52ccd729c37208659aad283708",
+    "changed_build_sources": [
+      "crates/mining-physics/tests/water_optics.rs",
+      "crates/mining/src/water.rs",
+      "crates/mining/src/water_blur.wgsl"
+    ]
+  },
+  "native_images": {
+    "sluice-final": {
+      "changed_rgb_pixels": 94044,
+      "max_channel_difference": 81
+    },
+    "sluice-normal": {
+      "changed_rgb_pixels": 0,
+      "max_channel_difference": 0
+    },
+    "sluice-sediment": {
+      "changed_rgb_pixels": 125411,
+      "max_channel_difference": 23
+    },
+    "sluice-column": {
+      "changed_rgb_pixels": 51111,
+      "max_channel_difference": 36
+    },
+    "outlet-final": {
+      "changed_rgb_pixels": 17324,
+      "max_channel_difference": 72
+    },
+    "river-final": {
+      "changed_rgb_pixels": 0,
+      "max_channel_difference": 0
+    },
+    "outlet_crop_identical": true
+  },
+  "frozen_physics": [
+    {
+      "view": "sluice",
+      "layer": "final",
+      "identical_physical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "surface",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "soil_render"
+      ],
+      "before_manifest": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/oblique-crest-20261024/after-sluice-final/frames.json",
+      "before_sha256": "6ead771247fb1cdf30a3887258d2f09871a296665d5e9062ee0233251072f563",
+      "after_sha256": "17581f23a2ec8198529c0875feeac338ff6776d22a290d248ea4e8c39b14514f"
+    },
+    {
+      "view": "sluice",
+      "layer": "normal",
+      "identical_physical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "surface",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "soil_render"
+      ],
+      "before_manifest": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/oblique-crest-20261024/after-sluice-normal/frames.json",
+      "before_sha256": "2873e12f81e063ebad4e8e586bef856b9bf208260627bfd758225e5e9a35d5cd",
+      "after_sha256": "87336d9b4da710683033df055be288b0ed3518a5dc6e2e0b5a5be698b6477153"
+    },
+    {
+      "view": "sluice",
+      "layer": "sediment",
+      "identical_physical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "surface",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "soil_render"
+      ],
+      "before_manifest": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/oblique-crest-20261024/after-sluice-sediment/frames.json",
+      "before_sha256": "7b7bb16e9389d60d5b665d8fa8d373b1f7d0688d079954e2cf692b56a5cbdb21",
+      "after_sha256": "1df6aca8c056c943b799b6f57bd68acf2f550289f58275bc1409705d3532d49a"
+    },
+    {
+      "view": "sluice",
+      "layer": "column",
+      "identical_physical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "surface",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "soil_render"
+      ],
+      "before_manifest": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/oblique-crest-20261024/diagnostic-column/frames.json",
+      "before_sha256": "230898fcb70e752e457b70644a66c72f5c017a490588ffff30c178f74383ed05",
+      "after_sha256": "92bd872f82a7c9abcfbe4462f60fd126125863593a81471e688ba096eff266f8"
+    },
+    {
+      "view": "outlet",
+      "layer": "final",
+      "identical_physical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "surface",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "soil_render"
+      ],
+      "before_manifest": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/oblique-crest-20261024/after-outlet-final/frames.json",
+      "before_sha256": "4679535b1829b9422e946dcaafaaf50d776d8facf08b4a4f11ad7c9c2ed605cd",
+      "after_sha256": "77f8f01e21f9fec63eae561208dfad1500f7e9093ebe79a3ffede726e7382992"
+    },
+    {
+      "view": "river",
+      "layer": "final",
+      "identical_physical_fields": [
+        "sim_time",
+        "fluid_clock",
+        "solver_steps",
+        "tracks",
+        "flow",
+        "surface",
+        "machine",
+        "active_soil",
+        "material_motion",
+        "soil_render"
+      ],
+      "before_manifest": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/oblique-crest-20261024/after-river-final/frames.json",
+      "before_sha256": "e88c4c94cb35410f30ca1dc970fb8666f57f1cec97fd89be4428f2a0ae8be6d0",
+      "after_sha256": "79ccfd56e24899e333216abe2c2095368dbfedc32b9b1c29579dcc59a2380475"
+    }
+  ],
+  "motion": {
+    "source_frames": 57,
+    "presentation_advances": 56,
+    "worker_advances": 28,
+    "wall_seconds": 2.957564542,
+    "sim_seconds": 0.9333333820104599,
+    "review_indices": [
+      0,
+      11,
+      22,
+      34,
+      45,
+      56
+    ],
+    "video_frames": 181,
+    "midpoint": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/optical-flux-20261024/final/motion-detailed/frame-0028.png",
+    "presentation_buffer_underruns": 0
+  },
+  "motion_capture_target_hz": 24,
+  "whole_video_playback_reviewed": false,
+  "all_57_temporal_crops_and_six_full_time_samples_reviewed": true,
+  "manual_OS_input_checked": false,
+  "benchmark": {
+    "before": {
+      "mean_fps": 55.79011790847188,
+      "p95_frame_ms": 26.145333,
+      "simulation_wall_ratio": 0.3215819050785994,
+      "passed": false,
+      "bulk_budget_passed": true,
+      "dry_mass_budget_passed": true,
+      "water_balance_error_m3": -7.818506411183535e-06,
+      "sluice_water_balance_error_m3": 0.0,
+      "bulk_material_error_m3": 3.366759528944385e-07,
+      "dry_mass_error_kg": 0.0006059801671653986,
+      "gold_balance_error_g": 1.3642420526593924e-12
+    },
+    "after": {
+      "mean_fps": 55.73218925203237,
+      "p95_frame_ms": 25.82075,
+      "simulation_wall_ratio": 0.32138080384099366,
+      "passed": false,
+      "bulk_budget_passed": true,
+      "dry_mass_budget_passed": true,
+      "water_balance_error_m3": -7.818506411183535e-06,
+      "sluice_water_balance_error_m3": 0.0,
+      "bulk_material_error_m3": 3.366759528944385e-07,
+      "dry_mass_error_kg": 0.0006059801671653986,
+      "gold_balance_error_g": 1.3642420526593924e-12
+    }
+  },
+  "binaries": {
+    "before": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/oblique-crest-20261024/final-app/First Bend.app/Contents/MacOS/mining",
+      "sha256": "19bf2131832c375759ab98ab4a189659ca003a10000e3fbddc994b402ed7d471"
+    },
+    "after": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/optical-flux-20261024/final/final-app/First Bend.app/Contents/MacOS/mining",
+      "sha256": "334c98a25dc07b942948667604527468e465aba88f9c6983e5f1d7238ece5b46"
+    },
+    "load": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/storage-final-2026-10-23/grown.json.save.json",
+      "sha256": "32acd1d5e9873f67f628df283712eca96c318a2f07780e1720fc6eaff0310e42"
+    }
+  },
+  "rejected_reflection_candidate": {
+    "reason": "Real-GPU birth control changes established water column by16.304%, despite static conservation. Not admitted. Generated candidate app discarded; source and failing log retained.",
+    "relative_existing_column_change": 0.16304386,
+    "source_sha256": "54cfe4b05a34d1ae5fbb879c9811491dfb9a036700f89b4c66b96b901e87f643",
+    "failing_gpu_log_sha256": "69eaa092e72d8c7edacc63641cf70932c2ee284f643f294da611bf8f1a3f7d81"
+  },
+  "optical_filter_correction_complete": true,
+  "full_water_art_complete": false,
+  "full_game_goal_complete": false,
+  "limitations": [
+    "Conserves additive ray-column sums; not a proof of exact perspective-weighted 3D optical volume.",
+    "Sediment phase lighting and extinction coefficients remain uncalibrated presentation approximations.",
+    "Broad waves, grain stippling and physical real time remain unfinished."
+  ],
+  "remaining_issue": "sluice-optical-projection-20261024",
+  "all_heavy_jobs_sequential": true,
+  "cleanup_final_counts": {
+    "agent_browser": 0,
+    "playwright_tests": 0,
+    "playwright_mcp": 14,
+    "chrome_for_testing": 0,
+    "node_ecosystem": 56,
+    "mining_cargo_rustc_ffmpeg": 0
+  },
+  "new_panic_full_or_WindowServer_report": false,
+  "cleanup_log_sha256": "c84553ac47984386aab59fd095528cc229a02652b0656ee6b357ac5167d3653b",
+  "original_dirty_files_preserved": 9,
+  "scoped_storage_cleanup": {
+    "broader_visualizations_dedup_rejected_by_auto_review": true,
+    "reason": "Potential changes to unrelated artifact inode/link state.",
+    "safe_alternative": "Linked13 byte-identical PNGs only within the previous turn owned oblique-crest capture folder, preserving bytes and paths; discarded only this turn rejected generated app."
+  },
+  "evidence_hashes": {
+    "final/comparison.png": "cbdec680f294201506a0d991f1d76b0f7990433f6c472f28c8efc1b9294706b6",
+    "final/detailed-motion-review.png": "f85dc9d5fbbed67dbb6abcdd7aaddd036ae6f0f6660202dafb83b8580956d052",
+    "final/detailed-motion.mp4": "1ff4505c59a36ad547015a783d0a61c98cc2ce890612ed276b3609a223da7700",
+    "final/all-temporal-crops.png": "24d57762e9860f802caac1b5db066a1a3aeddaf1a16aa8e6ea4e54b334bb2679",
+    "final/gpu.log": "181258f2f73e1d39ab496cfcc2ceace7d20a1e349e06f9c6f5817952555bc972",
+    "final/app.log": "756c5333e5b09d6521cb8e063a6ec18514e5ccf9118cbb6fad0551c6aca0e9cb",
+    "final/clippy.log": "961e78c04e6fa9ec2bea9041721b21bcede3268534a6d615ef7452c8645c2d12",
+    "before-gpu.log": "ca437ec9d219eceb2165ed0f79129ba34159ea1b2436836125870350881037a5",
+    "old-staged-gpu.log": "e24eedb22b917af93e85eb1c1d8d5b550f0087bbc667602e93f7ae68e37dadf8",
+    "final/motion-detailed/frames.json": "717075d0d62a497737c140e4d1cd978a5043b1fce3b82d7213baf11bfabd5d38"
+  }
+}

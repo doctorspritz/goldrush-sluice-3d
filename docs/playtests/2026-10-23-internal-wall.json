@@ -1,0 +1,4952 @@
+{
+  "parent": "894bdf13885fbb3b63be8b6e653f596c6c47f4cb",
+  "source_sha256": {
+    "crates/game/src/gpu/g2p_3d.rs": "9089b25b70dafba04a0c00ded9ef7e4b66892ec4e2487b92431c203e8779e69e",
+    "crates/game/src/gpu/phase_transfer_3d.rs": "941b1084ba5605ad8df106c693f49ef1cbb044b7524344dd81c25f994ce39ec6",
+    "crates/game/src/gpu/shaders/density_error_3d.wgsl": "92d73a79fc4942c9c6d001ed5b76f56a613bc156eb4adf7dd3e02c6fd41df8a2",
+    "crates/game/src/gpu/shaders/g2p_3d.wgsl": "e585e75c9e8953fc2ee422e0195411ae97ad52dcbfcb1cf5d1a11ff0e811fafd",
+    "crates/game/src/gpu/shaders/mac_wall_3d.wgsl": "95412af6ab4bd9105c0767fdd5023ff391a702b8915ec7ecce06cbc4445fe156",
+    "crates/game/src/gpu/shaders/phase_transfer_3d.wgsl": "b69e83d147c374a8fd2cd166a05242cd6758673ca33d7e129a79b2e42ea01630",
+    "crates/mining-physics/tests/conservative_runtime.rs": "ab00e0bd14611e74811c15b0939faea66b92bcae7edf7fe06ed4dec63181a156",
+    "crates/sim3d/src/clump.rs": "46079d647955e9011c384c09b7ff582f54c30c338bba4a0571c6ed90d3828d32"
+  },
+  "app": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/internal-wall-20261023/delivery/First Bend.app",
+  "binary_sha256": "0c4bd2d341f0805b179656bbad383e706aa1ad4033036ea008b8155ef0de520b",
+  "diagnostic_sha256": "339b809cf1f6b3960ef67e2aefb65dc9779c0365c17db2e15b94d7c8693d87aa",
+  "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/internal-wall-20261023",
+  "conservative_default": false,
+  "status": "partial internal-wall accuracy checkpoint; full goal remains open",
+  "baseline": {
+    "head": "894bdf13885fbb3b63be8b6e653f596c6c47f4cb",
+    "source_directory": "/private/tmp/sluice-voxel-baseline-source-20261023",
+    "test_override": "same new conservative_runtime.rs controls",
+    "test_sha256": "ab00e0bd14611e74811c15b0939faea66b92bcae7edf7fe06ed4dec63181a156",
+    "diagnostic_sha256": "956edb27315e4f44d50d7f9b739bfbeed8c31291d01e3b8a2c733ce0c5e8ff99"
+  },
+  "baseline_controls": {
+    "affine": [
+      {
+        "affine_error": 8.880871772766113,
+        "blend": 0.0,
+        "energy_ratio": 0.939939651430281,
+        "passed": false,
+        "velocity_error": 0.04083233326673508,
+        "voxel": true,
+        "wall": 0
+      },
+      {
+        "affine_error": 8.88087272644043,
+        "blend": 0.9700000286102295,
+        "energy_ratio": 0.9399396503400584,
+        "passed": false,
+        "velocity_error": 0.04083232954144478,
+        "voxel": true,
+        "wall": 0
+      },
+      {
+        "affine_error": 8.88087272644043,
+        "blend": 1.0,
+        "energy_ratio": 0.9399396464058133,
+        "passed": false,
+        "velocity_error": 0.04083232954144478,
+        "voxel": true,
+        "wall": 0
+      },
+      {
+        "affine_error": 8.880865097045898,
+        "blend": 0.0,
+        "energy_ratio": 0.93993966195764,
+        "passed": false,
+        "velocity_error": 0.040832314640283585,
+        "voxel": true,
+        "wall": 1
+      },
+      {
+        "affine_error": 8.880865097045898,
+        "blend": 0.9700000286102295,
+        "energy_ratio": 0.9399396367652861,
+        "passed": false,
+        "velocity_error": 0.04083230718970299,
+        "voxel": true,
+        "wall": 1
+      },
+      {
+        "affine_error": 8.880865097045898,
+        "blend": 1.0,
+        "energy_ratio": 0.9399396313100541,
+        "passed": false,
+        "velocity_error": 0.04083230718970299,
+        "voxel": true,
+        "wall": 1
+      },
+      {
+        "affine_error": 8.880871772766113,
+        "blend": 0.0,
+        "energy_ratio": 0.9399396559329318,
+        "passed": false,
+        "velocity_error": 0.04083232209086418,
+        "voxel": true,
+        "wall": 2
+      },
+      {
+        "affine_error": 8.880871772766113,
+        "blend": 0.9700000286102295,
+        "energy_ratio": 0.9399396505937228,
+        "passed": false,
+        "velocity_error": 0.04083231836557388,
+        "voxel": true,
+        "wall": 2
+      },
+      {
+        "affine_error": 8.880871772766113,
+        "blend": 1.0,
+        "energy_ratio": 0.9399396475413883,
+        "passed": false,
+        "velocity_error": 0.04083232209086418,
+        "voxel": true,
+        "wall": 2
+      },
+      {
+        "affine_error": 8.880864143371582,
+        "blend": 0.0,
+        "energy_ratio": 0.9399396678574867,
+        "passed": false,
+        "velocity_error": 0.04083230718970299,
+        "voxel": true,
+        "wall": 3
+      },
+      {
+        "affine_error": 8.880864143371582,
+        "blend": 0.9700000286102295,
+        "energy_ratio": 0.939939631693222,
+        "passed": false,
+        "velocity_error": 0.04083230718970299,
+        "voxel": true,
+        "wall": 3
+      },
+      {
+        "affine_error": 8.880864143371582,
+        "blend": 1.0,
+        "energy_ratio": 0.9399396283571636,
+        "passed": false,
+        "velocity_error": 0.04083230718970299,
+        "voxel": true,
+        "wall": 3
+      },
+      {
+        "affine_error": 8.880871772766113,
+        "blend": 0.0,
+        "energy_ratio": 0.9399396951894539,
+        "passed": false,
+        "velocity_error": 0.04083232581615448,
+        "voxel": true,
+        "wall": 4
+      },
+      {
+        "affine_error": 8.88087272644043,
+        "blend": 0.9700000286102295,
+        "energy_ratio": 0.9399396538178153,
+        "passed": false,
+        "velocity_error": 0.04083232209086418,
+        "voxel": true,
+        "wall": 4
+      },
+      {
+        "affine_error": 8.88087272644043,
+        "blend": 1.0,
+        "energy_ratio": 0.9399396523289085,
+        "passed": false,
+        "velocity_error": 0.04083231836557388,
+        "voxel": true,
+        "wall": 4
+      },
+      {
+        "affine_error": 8.880864143371582,
+        "blend": 0.0,
+        "energy_ratio": 0.9399396897339523,
+        "passed": false,
+        "velocity_error": 0.04083230718970299,
+        "voxel": true,
+        "wall": 5
+      },
+      {
+        "affine_error": 8.880864143371582,
+        "blend": 0.9700000286102295,
+        "energy_ratio": 0.9399396350909512,
+        "passed": false,
+        "velocity_error": 0.040832314640283585,
+        "voxel": true,
+        "wall": 5
+      },
+      {
+        "affine_error": 8.880864143371582,
+        "blend": 1.0,
+        "energy_ratio": 0.9399396306575919,
+        "passed": false,
+        "velocity_error": 0.040832314640283585,
+        "voxel": true,
+        "wall": 5
+      }
+    ],
+    "freefall": [
+      {
+        "dt": 0.008333333767950535,
+        "grain_error": 0.02222733199596405,
+        "passed": false,
+        "voxel": true,
+        "wall": 0,
+        "water_error": 0.03325814753770828
+      },
+      {
+        "dt": 0.004166666883975267,
+        "grain_error": 0.022772029042243958,
+        "passed": false,
+        "voxel": true,
+        "wall": 0,
+        "water_error": 0.044754497706890106
+      },
+      {
+        "dt": 0.008333333767950535,
+        "grain_error": 0.02344508469104767,
+        "passed": false,
+        "voxel": true,
+        "wall": 1,
+        "water_error": 0.03325813263654709
+      },
+      {
+        "dt": 0.004166666883975267,
+        "grain_error": 0.02401965856552124,
+        "passed": false,
+        "voxel": true,
+        "wall": 1,
+        "water_error": 0.04475453495979309
+      },
+      {
+        "dt": 0.008333333767950535,
+        "grain_error": 0.022227324545383453,
+        "passed": false,
+        "voxel": true,
+        "wall": 4,
+        "water_error": 0.0332581102848053
+      },
+      {
+        "dt": 0.004166666883975267,
+        "grain_error": 0.022772029042243958,
+        "passed": false,
+        "voxel": true,
+        "wall": 4,
+        "water_error": 0.04475448280572891
+      },
+      {
+        "dt": 0.008333333767950535,
+        "grain_error": 0.02344507724046707,
+        "passed": false,
+        "voxel": true,
+        "wall": 5,
+        "water_error": 0.03325813263654709
+      },
+      {
+        "dt": 0.004166666883975267,
+        "grain_error": 0.024019643664360046,
+        "passed": false,
+        "voxel": true,
+        "wall": 5,
+        "water_error": 0.04475453495979309
+      }
+    ],
+    "shear": [
+      {
+        "blend": 0.0,
+        "energy_ratio": 0.9327761081410609,
+        "passed": false,
+        "tangent_error": 0.05185952930304158,
+        "wall": 0
+      },
+      {
+        "blend": 0.9700000286102295,
+        "energy_ratio": 0.9399529657825034,
+        "passed": false,
+        "tangent_error": 0.05185953213736346,
+        "wall": 0
+      },
+      {
+        "blend": 1.0,
+        "energy_ratio": 0.9403881363650093,
+        "passed": false,
+        "tangent_error": 0.051859536093589426,
+        "wall": 0
+      },
+      {
+        "blend": 0.0,
+        "energy_ratio": 0.9327761165523638,
+        "passed": false,
+        "tangent_error": 0.05185949569010292,
+        "wall": 1
+      },
+      {
+        "blend": 0.9700000286102295,
+        "energy_ratio": 0.9399529346416071,
+        "passed": false,
+        "tangent_error": 0.05185951860333809,
+        "wall": 1
+      },
+      {
+        "blend": 1.0,
+        "energy_ratio": 0.9403881042027896,
+        "passed": false,
+        "tangent_error": 0.0518595228923734,
+        "wall": 1
+      },
+      {
+        "blend": 0.0,
+        "energy_ratio": 0.9327760997439668,
+        "passed": false,
+        "tangent_error": 0.05185953202286449,
+        "wall": 2
+      },
+      {
+        "blend": 0.9700000286102295,
+        "energy_ratio": 0.9399529546469733,
+        "passed": false,
+        "tangent_error": 0.05185953684231015,
+        "wall": 2
+      },
+      {
+        "blend": 1.0,
+        "energy_ratio": 0.9403881263909378,
+        "passed": false,
+        "tangent_error": 0.05185954033332449,
+        "wall": 2
+      },
+      {
+        "blend": 0.0,
+        "energy_ratio": 0.9327761111157571,
+        "passed": false,
+        "tangent_error": 0.05185949907836423,
+        "wall": 3
+      },
+      {
+        "blend": 0.9700000286102295,
+        "energy_ratio": 0.9399529312498741,
+        "passed": false,
+        "tangent_error": 0.05185952060597859,
+        "wall": 3
+      },
+      {
+        "blend": 1.0,
+        "energy_ratio": 0.9403881010097356,
+        "passed": false,
+        "tangent_error": 0.05185952487319684,
+        "wall": 3
+      },
+      {
+        "blend": 0.0,
+        "energy_ratio": 0.9327761181240762,
+        "passed": false,
+        "tangent_error": 0.051859523811693405,
+        "wall": 4
+      },
+      {
+        "blend": 0.9700000286102295,
+        "energy_ratio": 0.9399529572634778,
+        "passed": false,
+        "tangent_error": 0.05185953503911873,
+        "wall": 4
+      },
+      {
+        "blend": 1.0,
+        "energy_ratio": 0.9403881275801347,
+        "passed": false,
+        "tangent_error": 0.051859538961791775,
+        "wall": 4
+      },
+      {
+        "blend": 0.0,
+        "energy_ratio": 0.9327761196474103,
+        "passed": false,
+        "tangent_error": 0.051859494154735224,
+        "wall": 5
+      },
+      {
+        "blend": 0.9700000286102295,
+        "energy_ratio": 0.9399529426310885,
+        "passed": false,
+        "tangent_error": 0.051859515232757274,
+        "wall": 5
+      },
+      {
+        "blend": 1.0,
+        "energy_ratio": 0.9403881108063304,
+        "passed": false,
+        "tangent_error": 0.05185952030892307,
+        "wall": 5
+      }
+    ]
+  },
+  "final_controls": {
+    "affine": [
+      {
+        "affine_error": 1.6866073337951093e-06,
+        "blend": 0.0,
+        "energy_ratio": 1.0000000641412525,
+        "passed": true,
+        "velocity_error": 3.72533115466922e-08,
+        "voxel": true,
+        "wall": 0
+      },
+      {
+        "affine_error": 8.7216790234379e-07,
+        "blend": 0.9700000286102295,
+        "energy_ratio": 1.0000000398808864,
+        "passed": true,
+        "velocity_error": 2.356080486265455e-08,
+        "voxel": true,
+        "wall": 0
+      },
+      {
+        "affine_error": 8.560892865716596e-07,
+        "blend": 1.0,
+        "energy_ratio": 1.0000000363214714,
+        "passed": true,
+        "velocity_error": 2.356080486265455e-08,
+        "voxel": true,
+        "wall": 0
+      },
+      {
+        "affine_error": 1.5459820588148432e-06,
+        "blend": 0.0,
+        "energy_ratio": 1.0000001084949723,
+        "passed": true,
+        "velocity_error": 3.0790918259526734e-08,
+        "voxel": true,
+        "wall": 1
+      },
+      {
+        "affine_error": 6.722204943798715e-07,
+        "blend": 0.9700000286102295,
+        "energy_ratio": 1.0000000625670435,
+        "passed": true,
+        "velocity_error": 2.356080486265455e-08,
+        "voxel": true,
+        "wall": 1
+      },
+      {
+        "affine_error": 6.616495511480025e-07,
+        "blend": 1.0,
+        "energy_ratio": 1.0000000580172272,
+        "passed": true,
+        "velocity_error": 2.356080486265455e-08,
+        "voxel": true,
+        "wall": 1
+      },
+      {
+        "affine_error": 1.6866072201082716e-06,
+        "blend": 0.0,
+        "energy_ratio": 1.0000000712693389,
+        "passed": true,
+        "velocity_error": 3.3320823433768965e-08,
+        "voxel": true,
+        "wall": 2
+      },
+      {
+        "affine_error": 8.720350024304935e-07,
+        "blend": 0.9700000286102295,
+        "energy_ratio": 1.0000000392911947,
+        "passed": true,
+        "velocity_error": 1.6660106183508105e-08,
+        "voxel": true,
+        "wall": 2
+      },
+      {
+        "affine_error": 8.560892297282408e-07,
+        "blend": 1.0,
+        "energy_ratio": 1.0000000363233845,
+        "passed": true,
+        "velocity_error": 1.666000493116826e-08,
+        "voxel": true,
+        "wall": 2
+      },
+      {
+        "affine_error": 1.8193884443462593e-06,
+        "blend": 0.0,
+        "energy_ratio": 1.0000001121438646,
+        "passed": true,
+        "velocity_error": 3.726454167463089e-08,
+        "voxel": true,
+        "wall": 3
+      },
+      {
+        "affine_error": 6.976127906455076e-07,
+        "blend": 0.9700000286102295,
+        "energy_ratio": 1.00000005930155,
+        "passed": true,
+        "velocity_error": 2.356080486265455e-08,
+        "voxel": true,
+        "wall": 3
+      },
+      {
+        "affine_error": 6.60099544802506e-07,
+        "blend": 1.0,
+        "energy_ratio": 1.0000000559412616,
+        "passed": true,
+        "velocity_error": 2.356080486265455e-08,
+        "voxel": true,
+        "wall": 3
+      },
+      {
+        "affine_error": 1.7517472770123277e-06,
+        "blend": 0.0,
+        "energy_ratio": 1.0000000901760078,
+        "passed": true,
+        "velocity_error": 3.3333023452541966e-08,
+        "voxel": true,
+        "wall": 4
+      },
+      {
+        "affine_error": 8.720350592739123e-07,
+        "blend": 0.9700000286102295,
+        "energy_ratio": 1.000000034452943,
+        "passed": true,
+        "velocity_error": 1.666000493116826e-08,
+        "voxel": true,
+        "wall": 4
+      },
+      {
+        "affine_error": 8.560892297282408e-07,
+        "blend": 1.0,
+        "energy_ratio": 1.0000000314882151,
+        "passed": true,
+        "velocity_error": 1.666000493116826e-08,
+        "voxel": true,
+        "wall": 4
+      },
+      {
+        "affine_error": 1.9461970168777043e-06,
+        "blend": 0.0,
+        "energy_ratio": 1.0000001427826586,
+        "passed": true,
+        "velocity_error": 3.80484017625804e-08,
+        "voxel": true,
+        "wall": 5
+      },
+      {
+        "affine_error": 8.435152949459734e-07,
+        "blend": 0.9700000286102295,
+        "energy_ratio": 1.0000000609241677,
+        "passed": true,
+        "velocity_error": 2.356145145654409e-08,
+        "voxel": true,
+        "wall": 5
+      },
+      {
+        "affine_error": 8.275526965917379e-07,
+        "blend": 1.0,
+        "energy_ratio": 1.0000000571670575,
+        "passed": true,
+        "velocity_error": 2.356195416552964e-08,
+        "voxel": true,
+        "wall": 5
+      }
+    ],
+    "freefall": [
+      {
+        "dt": 0.008333333767950535,
+        "grain_error": 4.4718863279058496e-08,
+        "passed": true,
+        "voxel": true,
+        "wall": 0,
+        "water_error": 4.4706904844815654e-08
+      },
+      {
+        "dt": 0.004166666883975267,
+        "grain_error": 5.960916382719006e-08,
+        "passed": true,
+        "voxel": true,
+        "wall": 0,
+        "water_error": 7.459298956291605e-08
+      },
+      {
+        "dt": 0.008333333767950535,
+        "grain_error": 3.7327378521467836e-08,
+        "passed": true,
+        "voxel": true,
+        "wall": 1,
+        "water_error": 3.743612353446224e-08
+      },
+      {
+        "dt": 0.004166666883975267,
+        "grain_error": 4.470357239938494e-08,
+        "passed": true,
+        "voxel": true,
+        "wall": 1,
+        "water_error": 7.467609464129055e-08
+      },
+      {
+        "dt": 0.008333333767950535,
+        "grain_error": 4.4704059121158934e-08,
+        "passed": true,
+        "voxel": true,
+        "wall": 4,
+        "water_error": 3.731648945404231e-08
+      },
+      {
+        "dt": 0.004166666883975267,
+        "grain_error": 4.47093775335361e-08,
+        "passed": true,
+        "voxel": true,
+        "wall": 4,
+        "water_error": 7.459291140321511e-08
+      },
+      {
+        "dt": 0.008333333767950535,
+        "grain_error": 4.470798131706033e-08,
+        "passed": true,
+        "voxel": true,
+        "wall": 5,
+        "water_error": 3.7262545049543405e-08
+      },
+      {
+        "dt": 0.004166666883975267,
+        "grain_error": 5.960543347782732e-08,
+        "passed": true,
+        "voxel": true,
+        "wall": 5,
+        "water_error": 7.460430140326935e-08
+      }
+    ],
+    "shear": [
+      {
+        "blend": 0.0,
+        "energy_ratio": 0.9923610988483069,
+        "passed": true,
+        "tangent_error": 3.4916019366340204e-08,
+        "wall": 0
+      },
+      {
+        "blend": 0.9700000286102295,
+        "energy_ratio": 0.9995640623580704,
+        "passed": true,
+        "tangent_error": 2.8085902670221102e-08,
+        "wall": 0
+      },
+      {
+        "blend": 1.0,
+        "energy_ratio": 1.0000000414936274,
+        "passed": true,
+        "tangent_error": 2.0603427167230853e-08,
+        "wall": 0
+      },
+      {
+        "blend": 0.0,
+        "energy_ratio": 0.9923611022225697,
+        "passed": true,
+        "tangent_error": 3.697286072434186e-08,
+        "wall": 1
+      },
+      {
+        "blend": 0.9700000286102295,
+        "energy_ratio": 0.99956405760551,
+        "passed": true,
+        "tangent_error": 2.5241559582434195e-08,
+        "wall": 1
+      },
+      {
+        "blend": 1.0,
+        "energy_ratio": 1.00000003845663,
+        "passed": true,
+        "tangent_error": 1.88491081018796e-08,
+        "wall": 1
+      },
+      {
+        "blend": 0.0,
+        "energy_ratio": 0.9923610880576373,
+        "passed": true,
+        "tangent_error": 3.229230270026013e-08,
+        "wall": 2
+      },
+      {
+        "blend": 0.9700000286102295,
+        "energy_ratio": 0.9995640628891426,
+        "passed": true,
+        "tangent_error": 2.7985497009098783e-08,
+        "wall": 2
+      },
+      {
+        "blend": 1.0,
+        "energy_ratio": 1.0000000448203972,
+        "passed": true,
+        "tangent_error": 2.1911770693170306e-08,
+        "wall": 2
+      },
+      {
+        "blend": 0.0,
+        "energy_ratio": 0.9923611003735351,
+        "passed": true,
+        "tangent_error": 3.9701633395318806e-08,
+        "wall": 3
+      },
+      {
+        "blend": 0.9700000286102295,
+        "energy_ratio": 0.9995640596517426,
+        "passed": true,
+        "tangent_error": 2.6885390640374237e-08,
+        "wall": 3
+      },
+      {
+        "blend": 1.0,
+        "energy_ratio": 1.0000000397399977,
+        "passed": true,
+        "tangent_error": 1.9435943379321826e-08,
+        "wall": 3
+      },
+      {
+        "blend": 0.0,
+        "energy_ratio": 0.9923611043019042,
+        "passed": true,
+        "tangent_error": 3.7259290266304217e-08,
+        "wall": 4
+      },
+      {
+        "blend": 0.9700000286102295,
+        "energy_ratio": 0.9995640599937149,
+        "passed": true,
+        "tangent_error": 2.7526364433688695e-08,
+        "wall": 4
+      },
+      {
+        "blend": 1.0,
+        "energy_ratio": 1.0000000406354697,
+        "passed": true,
+        "tangent_error": 2.045683006061822e-08,
+        "wall": 4
+      },
+      {
+        "blend": 0.0,
+        "energy_ratio": 0.9923611181081893,
+        "passed": true,
+        "tangent_error": 4.365160376637153e-08,
+        "wall": 5
+      },
+      {
+        "blend": 0.9700000286102295,
+        "energy_ratio": 0.9995640602077777,
+        "passed": true,
+        "tangent_error": 2.6612885965256904e-08,
+        "wall": 5
+      },
+      {
+        "blend": 1.0,
+        "energy_ratio": 1.0000000393741448,
+        "passed": true,
+        "tangent_error": 1.925709707787353e-08,
+        "wall": 5
+      }
+    ]
+  },
+  "matrices": {
+    "exterior": {
+      "baseline": {
+        "cases": [
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 3.721787150506135e-09,
+            "max_drift_m": 1.0729780115070753e-05,
+            "max_speed_mps": 0.00010816634312504902,
+            "particles": 9216,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 3.7109592990280268e-09,
+            "max_drift_m": 1.078881359717343e-05,
+            "max_speed_mps": 0.00010899944754783064,
+            "particles": 73728,
+            "passed": true,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 1.6746044181786869e-06,
+            "max_drift_m": 0.00021702054073102772,
+            "max_speed_mps": 0.0021639587357640266,
+            "particles": 73728,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 1.048106168484598e-09,
+            "max_drift_m": 5.386769771575928e-06,
+            "max_speed_mps": 5.4732699936721474e-05,
+            "particles": 9216,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 2.7737147373349243e-14,
+            "max_drift_m": 5.21540641784668e-08,
+            "max_speed_mps": 7.894756777204748e-07,
+            "particles": 9216,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 6.526125321731806e-14,
+            "max_drift_m": 6.705522537231445e-08,
+            "max_speed_mps": 1.2172108654340263e-06,
+            "particles": 73728,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 3.5777458014755633e-10,
+            "max_drift_m": 1.577625994286791e-06,
+            "max_speed_mps": 1.4659696716989856e-05,
+            "particles": 9216,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 3.5525851834699354e-10,
+            "max_drift_m": 1.9359547422936885e-06,
+            "max_speed_mps": 1.9302267901366577e-05,
+            "particles": 73728,
+            "passed": true,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 1.364475502833622e-07,
+            "max_drift_m": 2.3052018150337972e-05,
+            "max_speed_mps": 0.00023913063341751695,
+            "particles": 73728,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 6.193568423550406e-11,
+            "max_drift_m": 5.68485290841636e-07,
+            "max_speed_mps": 5.739390417147661e-06,
+            "particles": 9216,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 4.1095936597460236e-14,
+            "max_drift_m": 2.982505264981228e-08,
+            "max_speed_mps": 6.023927312526212e-07,
+            "particles": 9216,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 8.736174953754969e-14,
+            "max_drift_m": 4.7706993910878737e-08,
+            "max_speed_mps": 1.193192474602256e-06,
+            "particles": 73728,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          }
+        ],
+        "gate": "max speed < 1mm/s and max drift < 0.02 cell over the stated physical duration",
+        "geometry": "exterior-walls",
+        "passed": false,
+        "protocol": "initially stationary 0.12m square domain, 0.08m water depth, gravity -9.81, open top, closed other faces; no flow or vorticity force",
+        "requested_duration_s": 0.10000000149011612,
+        "uses_sdf": false
+      },
+      "final": {
+        "cases": [
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 3.7235906782195708e-09,
+            "max_drift_m": 1.0729780115070753e-05,
+            "max_speed_mps": 0.00010814159759320319,
+            "particles": 9216,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 3.7163273925987156e-09,
+            "max_drift_m": 1.0796081369335297e-05,
+            "max_speed_mps": 0.00010909354023169726,
+            "particles": 73728,
+            "passed": true,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 1.6745961429256827e-06,
+            "max_drift_m": 0.00021700563956983387,
+            "max_speed_mps": 0.002163974568247795,
+            "particles": 73728,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 1.0481199825868415e-09,
+            "max_drift_m": 5.3942203521728516e-06,
+            "max_speed_mps": 5.4742467909818515e-05,
+            "particles": 9216,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 3.919124646397045e-14,
+            "max_drift_m": 5.21540641784668e-08,
+            "max_speed_mps": 8.064118901529582e-07,
+            "particles": 9216,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 6.697436577098781e-14,
+            "max_drift_m": 7.450580596923828e-08,
+            "max_speed_mps": 1.2170953596069012e-06,
+            "particles": 73728,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 3.576878977077809e-10,
+            "max_drift_m": 1.5739213949927944e-06,
+            "max_speed_mps": 1.4738926438440103e-05,
+            "particles": 9216,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 3.552178735378113e-10,
+            "max_drift_m": 1.9322812931932276e-06,
+            "max_speed_mps": 1.9299613995826803e-05,
+            "particles": 73728,
+            "passed": true,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 1.3644620789154473e-07,
+            "max_drift_m": 2.3042710381560028e-05,
+            "max_speed_mps": 0.00023905134003143758,
+            "particles": 73728,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 6.190503770153611e-11,
+            "max_drift_m": 5.677738386111741e-07,
+            "max_speed_mps": 5.766397407569457e-06,
+            "particles": 9216,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 4.6474395280780746e-14,
+            "max_drift_m": 3.725290298461914e-08,
+            "max_speed_mps": 6.431544647966803e-07,
+            "particles": 9216,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "exterior-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 9.025140091529287e-14,
+            "max_drift_m": 5.960464477539063e-08,
+            "max_speed_mps": 1.2384352885419503e-06,
+            "particles": 73728,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          }
+        ],
+        "gate": "max speed < 1mm/s and max drift < 0.02 cell over the stated physical duration",
+        "geometry": "exterior-walls",
+        "passed": false,
+        "protocol": "initially stationary 0.12m square domain, 0.08m water depth, gravity -9.81, open top, closed other faces; no flow or vorticity force",
+        "requested_duration_s": 0.10000000149011612,
+        "uses_sdf": false
+      }
+    },
+    "box": {
+      "baseline": {
+        "cases": [
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.0016768736800462619,
+            "max_drift_m": 0.008467545732855797,
+            "max_speed_mps": 0.15010981261730194,
+            "particles": 6400,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.0018740037955660223,
+            "max_drift_m": 0.00927339680492878,
+            "max_speed_mps": 0.16256408393383026,
+            "particles": 51200,
+            "passed": false,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 0.0010881526810095292,
+            "max_drift_m": 0.009831216186285019,
+            "max_speed_mps": 0.18249736726284027,
+            "particles": 51200,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 0.0015533270109900862,
+            "max_drift_m": 0.00790466833859682,
+            "max_speed_mps": 0.14319555461406708,
+            "particles": 6400,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.0016766436699867,
+            "max_drift_m": 0.00847583543509245,
+            "max_speed_mps": 0.15016677975654602,
+            "particles": 6400,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 0.001082486941217957,
+            "max_drift_m": 0.00999446026980877,
+            "max_speed_mps": 0.1837846338748932,
+            "particles": 51200,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.001770619915742062,
+            "max_drift_m": 0.008762482553720474,
+            "max_speed_mps": 0.13892972469329834,
+            "particles": 6400,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.001911192363409866,
+            "max_drift_m": 0.009661074727773666,
+            "max_speed_mps": 0.17085523903369904,
+            "particles": 51200,
+            "passed": false,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 0.0011315558088817069,
+            "max_drift_m": 0.010174935683608055,
+            "max_speed_mps": 0.1830722987651825,
+            "particles": 51200,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 0.001694141875751835,
+            "max_drift_m": 0.008248202502727509,
+            "max_speed_mps": 0.14564189314842224,
+            "particles": 6400,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.0017707997132657457,
+            "max_drift_m": 0.008762919344007969,
+            "max_speed_mps": 0.13890193402767181,
+            "particles": 6400,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 0.0011319644120202867,
+            "max_drift_m": 0.01018007192760706,
+            "max_speed_mps": 0.1821097433567047,
+            "particles": 51200,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          }
+        ],
+        "gate": "max speed < 1mm/s and max drift < 0.02 cell over the stated physical duration",
+        "geometry": "voxel-walls",
+        "passed": false,
+        "protocol": "initially stationary 0.12m square domain, 0.08m water depth, gravity -9.81, open top, closed other faces; no flow or vorticity force",
+        "requested_duration_s": 0.10000000149011612,
+        "uses_sdf": false
+      },
+      "final": {
+        "cases": [
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 2.1645777329484506e-09,
+            "max_drift_m": 9.753629456099588e-06,
+            "max_speed_mps": 9.868889901554212e-05,
+            "particles": 6400,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 2.161114853000807e-09,
+            "max_drift_m": 9.827725079958327e-06,
+            "max_speed_mps": 9.961563046090305e-05,
+            "particles": 51200,
+            "passed": true,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 1.1191724363666342e-06,
+            "max_drift_m": 0.00021300533262547106,
+            "max_speed_mps": 0.002121172146871686,
+            "particles": 51200,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 6.082687220546782e-10,
+            "max_drift_m": 4.917405931337271e-06,
+            "max_speed_mps": 4.989400622434914e-05,
+            "particles": 6400,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 1.2452439924855362e-14,
+            "max_drift_m": 2.60770320892334e-08,
+            "max_speed_mps": 4.056963405218994e-07,
+            "particles": 6400,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 4.563028739458356e-14,
+            "max_drift_m": 7.078051567077637e-08,
+            "max_speed_mps": 1.1352424280630657e-06,
+            "particles": 51200,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 2.0680770941141828e-10,
+            "max_drift_m": 1.473272277507931e-06,
+            "max_speed_mps": 1.3354234397411346e-05,
+            "particles": 6400,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 2.0624398670005923e-10,
+            "max_drift_m": 1.79242601916485e-06,
+            "max_speed_mps": 1.8084501789417118e-05,
+            "particles": 51200,
+            "passed": true,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 8.854764358575734e-08,
+            "max_drift_m": 2.2760345018468797e-05,
+            "max_speed_mps": 0.0002360319485887885,
+            "particles": 51200,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 3.356406727486269e-11,
+            "max_drift_m": 5.252659320831299e-07,
+            "max_speed_mps": 5.355235316528706e-06,
+            "particles": 6400,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 2.0737264288433525e-14,
+            "max_drift_m": 1.4901161193847656e-08,
+            "max_speed_mps": 4.900800263385463e-07,
+            "particles": 6400,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 8.032286879554128e-14,
+            "max_drift_m": 5.21540641784668e-08,
+            "max_speed_mps": 1.1987480093011982e-06,
+            "particles": 51200,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          }
+        ],
+        "gate": "max speed < 1mm/s and max drift < 0.02 cell over the stated physical duration",
+        "geometry": "voxel-walls",
+        "passed": false,
+        "protocol": "initially stationary 0.12m square domain, 0.08m water depth, gravity -9.81, open top, closed other faces; no flow or vorticity force",
+        "requested_duration_s": 0.10000000149011612,
+        "uses_sdf": false
+      }
+    },
+    "box-sdf": {
+      "baseline": {
+        "cases": [
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.001684693689130648,
+            "max_drift_m": 0.008478067815303802,
+            "max_speed_mps": 0.15041892230510712,
+            "particles": 6396,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 292,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.0020225993326382385,
+            "max_drift_m": 0.010304389521479607,
+            "max_speed_mps": 0.1808202713727951,
+            "particles": 50908,
+            "passed": false,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 0.0010890034341440034,
+            "max_drift_m": 0.009832274168729782,
+            "max_speed_mps": 0.18252623081207275,
+            "particles": 51196,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 0.0015599906938706127,
+            "max_drift_m": 0.007912250235676765,
+            "max_speed_mps": 0.1434900313615799,
+            "particles": 6396,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.001684462923637149,
+            "max_drift_m": 0.00848570466041565,
+            "max_speed_mps": 0.15047587454319,
+            "particles": 6396,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 0.0010833283012454818,
+            "max_drift_m": 0.009995540603995323,
+            "max_speed_mps": 0.18381384015083313,
+            "particles": 51196,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.0017628045223909863,
+            "max_drift_m": 0.008662685751914978,
+            "max_speed_mps": 0.140707865357399,
+            "particles": 6396,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 292,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.001827668197330093,
+            "max_drift_m": 0.008614417165517807,
+            "max_speed_mps": 0.15738049149513245,
+            "particles": 50908,
+            "passed": false,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 0.0011324544794329415,
+            "max_drift_m": 0.010190324857831001,
+            "max_speed_mps": 0.18175120651721954,
+            "particles": 51196,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 0.0016854030491970772,
+            "max_drift_m": 0.008131495676934719,
+            "max_speed_mps": 0.15056495368480682,
+            "particles": 6396,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.0017629653701093256,
+            "max_drift_m": 0.008663101121783257,
+            "max_speed_mps": 0.14068177342414856,
+            "particles": 6396,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 0.0011338478293718296,
+            "max_drift_m": 0.01016561035066843,
+            "max_speed_mps": 0.17974360287189484,
+            "particles": 51196,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": true
+          }
+        ],
+        "gate": "max speed < 1mm/s and max drift < 0.02 cell over the stated physical duration",
+        "geometry": "voxel-walls",
+        "passed": false,
+        "protocol": "initially stationary 0.12m square domain, 0.08m water depth, gravity -9.81, open top, closed other faces; no flow or vorticity force",
+        "requested_duration_s": 0.10000000149011612,
+        "uses_sdf": true
+      },
+      "final": {
+        "cases": [
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 7.131420554380896e-07,
+            "max_drift_m": 0.0006313222693279386,
+            "max_speed_mps": 0.011523507535457611,
+            "particles": 6396,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 292,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 4.118526819457611e-05,
+            "max_drift_m": 0.0029480496887117624,
+            "max_speed_mps": 0.05366416275501251,
+            "particles": 50908,
+            "passed": false,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 1.2076643193384733e-06,
+            "max_drift_m": 0.0006014677346684039,
+            "max_speed_mps": 0.011269784532487392,
+            "particles": 51196,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 6.450590885308765e-07,
+            "max_drift_m": 0.0005854841438122094,
+            "max_speed_mps": 0.010928729549050331,
+            "particles": 6396,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 7.097604710410621e-07,
+            "max_drift_m": 0.0006318433443084359,
+            "max_speed_mps": 0.011521611362695694,
+            "particles": 6396,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 8.448504802687132e-08,
+            "max_drift_m": 0.0005903170094825327,
+            "max_speed_mps": 0.01108463667333126,
+            "particles": 51196,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 4.835229212174989e-07,
+            "max_drift_m": 0.0014931635232642293,
+            "max_speed_mps": 0.008961854502558708,
+            "particles": 6396,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 292,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 2.399423881943493e-06,
+            "max_drift_m": 0.0015547393122687936,
+            "max_speed_mps": 0.016081523150205612,
+            "particles": 50908,
+            "passed": false,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 1.4281382662285012e-07,
+            "max_drift_m": 0.0009994871215894818,
+            "max_speed_mps": 0.007592919282615185,
+            "particles": 51196,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 5.12528396729749e-07,
+            "max_drift_m": 0.0016444377833977342,
+            "max_speed_mps": 0.00853180792182684,
+            "particles": 6396,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 4.833603437648815e-07,
+            "max_drift_m": 0.001492304727435112,
+            "max_speed_mps": 0.008959074504673481,
+            "particles": 6396,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 5.436697318807842e-08,
+            "max_drift_m": 0.0009909075452014804,
+            "max_speed_mps": 0.007506408728659153,
+            "particles": 51196,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": true
+          }
+        ],
+        "gate": "max speed < 1mm/s and max drift < 0.02 cell over the stated physical duration",
+        "geometry": "voxel-walls",
+        "passed": false,
+        "protocol": "initially stationary 0.12m square domain, 0.08m water depth, gravity -9.81, open top, closed other faces; no flow or vorticity force",
+        "requested_duration_s": 0.10000000149011612,
+        "uses_sdf": true
+      }
+    },
+    "block-mask": {
+      "baseline": {
+        "cases": [
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.0014474065217429592,
+            "max_drift_m": 0.0080710519105196,
+            "max_speed_mps": 0.14218071103096008,
+            "particles": 6016,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.0016155136731583922,
+            "max_drift_m": 0.008872832171618938,
+            "max_speed_mps": 0.1546347588300705,
+            "particles": 48128,
+            "passed": false,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 0.0011219187825182184,
+            "max_drift_m": 0.009635084308683872,
+            "max_speed_mps": 0.17797152698040009,
+            "particles": 48128,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 0.0013257828672394556,
+            "max_drift_m": 0.0075366199016571045,
+            "max_speed_mps": 0.13561366498470306,
+            "particles": 6016,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.001447331066319945,
+            "max_drift_m": 0.008075165562331676,
+            "max_speed_mps": 0.14221316576004028,
+            "particles": 6016,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 0.0011177656804566417,
+            "max_drift_m": 0.009762337431311607,
+            "max_speed_mps": 0.1790057271718979,
+            "particles": 48128,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.0015234315159613663,
+            "max_drift_m": 0.008431981317698956,
+            "max_speed_mps": 0.14156889915466309,
+            "particles": 6016,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.0016425330732206184,
+            "max_drift_m": 0.009209122508764267,
+            "max_speed_mps": 0.15998569130897522,
+            "particles": 48128,
+            "passed": false,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 0.0011599230296843106,
+            "max_drift_m": 0.01000912394374609,
+            "max_speed_mps": 0.1913129836320877,
+            "particles": 48128,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 0.0014804863377990312,
+            "max_drift_m": 0.00782370287925005,
+            "max_speed_mps": 0.1453370749950409,
+            "particles": 6016,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.0015234690451395485,
+            "max_drift_m": 0.008432190865278244,
+            "max_speed_mps": 0.14156107604503632,
+            "particles": 6016,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 0.0011603836307067666,
+            "max_drift_m": 0.010015392675995827,
+            "max_speed_mps": 0.1910693645477295,
+            "particles": 48128,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          }
+        ],
+        "gate": "max speed < 1mm/s and max drift < 0.02 cell over the stated physical duration",
+        "geometry": "voxel-walls-and-block",
+        "passed": false,
+        "protocol": "initially stationary 0.12m square domain, 0.08m water depth, gravity -9.81, open top, closed other faces; no flow or vorticity force",
+        "requested_duration_s": 0.10000000149011612,
+        "uses_sdf": false
+      },
+      "final": {
+        "cases": [
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 1.1218134180573416e-05,
+            "max_drift_m": 0.0009222643566317856,
+            "max_speed_mps": 0.016751065850257874,
+            "particles": 6016,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 1.2542645717056059e-05,
+            "max_drift_m": 0.0010730186477303505,
+            "max_speed_mps": 0.019534559920430183,
+            "particles": 48128,
+            "passed": false,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 3.6039739264149295e-06,
+            "max_drift_m": 0.00082713010488078,
+            "max_speed_mps": 0.016092434525489807,
+            "particles": 48128,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 1.0286321026649509e-05,
+            "max_drift_m": 0.0008637091959826648,
+            "max_speed_mps": 0.01611386239528656,
+            "particles": 6016,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 1.1216400737310071e-05,
+            "max_drift_m": 0.0009237997001037002,
+            "max_speed_mps": 0.016764100641012192,
+            "particles": 6016,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 3.0154011872037594e-06,
+            "max_drift_m": 0.0008880630484782159,
+            "max_speed_mps": 0.01649695634841919,
+            "particles": 48128,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 1.107492769266984e-05,
+            "max_drift_m": 0.000961116689722985,
+            "max_speed_mps": 0.01736421324312687,
+            "particles": 6016,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 1.2371234191237599e-05,
+            "max_drift_m": 0.0011097544338554144,
+            "max_speed_mps": 0.019989287480711937,
+            "particles": 48128,
+            "passed": false,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 2.9547611233985262e-06,
+            "max_drift_m": 0.0009241125080734491,
+            "max_speed_mps": 0.016567517071962357,
+            "particles": 48128,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 1.0059668194085337e-05,
+            "max_drift_m": 0.0008992401417344809,
+            "max_speed_mps": 0.016542157158255577,
+            "particles": 6016,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 1.1074433874239238e-05,
+            "max_drift_m": 0.0009610917186364532,
+            "max_speed_mps": 0.0173611082136631,
+            "particles": 6016,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls-and-block",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 2.909160541878653e-06,
+            "max_drift_m": 0.0009193909936584532,
+            "max_speed_mps": 0.016475975513458252,
+            "particles": 48128,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          }
+        ],
+        "gate": "max speed < 1mm/s and max drift < 0.02 cell over the stated physical duration",
+        "geometry": "voxel-walls-and-block",
+        "passed": false,
+        "protocol": "initially stationary 0.12m square domain, 0.08m water depth, gravity -9.81, open top, closed other faces; no flow or vorticity force",
+        "requested_duration_s": 0.10000000149011612,
+        "uses_sdf": false
+      }
+    },
+    "block-sdf": {
+      "baseline": {
+        "cases": [
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.0014544415953874391,
+            "max_drift_m": 0.00807684101164341,
+            "max_speed_mps": 0.14238908886909485,
+            "particles": 6012,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 356,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.0017515296300182404,
+            "max_drift_m": 0.009883093647658825,
+            "max_speed_mps": 0.17247886955738068,
+            "particles": 47772,
+            "passed": false,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls-and-block",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 0.0011227531851854243,
+            "max_drift_m": 0.009635917842388153,
+            "max_speed_mps": 0.1779950112104416,
+            "particles": 48124,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 0.001331722701314437,
+            "max_drift_m": 0.007541671395301819,
+            "max_speed_mps": 0.1358061283826828,
+            "particles": 6012,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.0014543655360009116,
+            "max_drift_m": 0.008080955594778061,
+            "max_speed_mps": 0.14242160320281982,
+            "particles": 6012,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls-and-block",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 0.0011185990794746142,
+            "max_drift_m": 0.009763053618371487,
+            "max_speed_mps": 0.1790253072977066,
+            "particles": 48124,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.0015086838867958896,
+            "max_drift_m": 0.008392365649342537,
+            "max_speed_mps": 0.13982906937599182,
+            "particles": 6012,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 356,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.0015645538288405043,
+            "max_drift_m": 0.008018052205443382,
+            "max_speed_mps": 0.14824552834033966,
+            "particles": 47772,
+            "passed": false,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls-and-block",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 0.0011607824264981282,
+            "max_drift_m": 0.009999070316553116,
+            "max_speed_mps": 0.18973010778427124,
+            "particles": 48124,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 0.0015240766795136579,
+            "max_drift_m": 0.007794947363436222,
+            "max_speed_mps": 0.13297533988952637,
+            "particles": 6012,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.0015086996911001015,
+            "max_drift_m": 0.008392659947276115,
+            "max_speed_mps": 0.13982011377811432,
+            "particles": 6012,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls-and-block",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 0.0011609883552877232,
+            "max_drift_m": 0.010005082935094833,
+            "max_speed_mps": 0.1891728639602661,
+            "particles": 48124,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": true
+          }
+        ],
+        "gate": "max speed < 1mm/s and max drift < 0.02 cell over the stated physical duration",
+        "geometry": "voxel-walls-and-block",
+        "passed": false,
+        "protocol": "initially stationary 0.12m square domain, 0.08m water depth, gravity -9.81, open top, closed other faces; no flow or vorticity force",
+        "requested_duration_s": 0.10000000149011612,
+        "uses_sdf": true
+      },
+      "final": {
+        "cases": [
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 1.1715855069543102e-05,
+            "max_drift_m": 0.0009161099442280829,
+            "max_speed_mps": 0.016640495508909225,
+            "particles": 6012,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 356,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 4.955165568526889e-05,
+            "max_drift_m": 0.002812430262565613,
+            "max_speed_mps": 0.0508880689740181,
+            "particles": 47772,
+            "passed": false,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls-and-block",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 3.6879679294599826e-06,
+            "max_drift_m": 0.0008267461089417338,
+            "max_speed_mps": 0.016085203737020493,
+            "particles": 48124,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 1.0718063640424605e-05,
+            "max_drift_m": 0.0008578199776820838,
+            "max_speed_mps": 0.016004586592316628,
+            "particles": 6012,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 1.1713699704342502e-05,
+            "max_drift_m": 0.0009176419698633254,
+            "max_speed_mps": 0.016653627157211304,
+            "particles": 6012,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls-and-block",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 3.0965141976432504e-06,
+            "max_drift_m": 0.0008876827196218073,
+            "max_speed_mps": 0.01648993045091629,
+            "particles": 48124,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 1.155730655191983e-05,
+            "max_drift_m": 0.0015729020815342665,
+            "max_speed_mps": 0.01743149943649769,
+            "particles": 6012,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 356,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 1.7065949580465668e-05,
+            "max_drift_m": 0.0015866755275055766,
+            "max_speed_mps": 0.021453065797686577,
+            "particles": 47772,
+            "passed": false,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls-and-block",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 3.0102020768851265e-06,
+            "max_drift_m": 0.001006694626994431,
+            "max_speed_mps": 0.01659475639462471,
+            "particles": 48124,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 1.055224301573929e-05,
+            "max_drift_m": 0.0017184884054586291,
+            "max_speed_mps": 0.016642218455672264,
+            "particles": 6012,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls-and-block",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 1.1556815188366895e-05,
+            "max_drift_m": 0.0015725165139883757,
+            "max_speed_mps": 0.01742846705019474,
+            "particles": 6012,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": true
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.1,
+            "excluded_seed_points": 4,
+            "geometry": "voxel-walls-and-block",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 2.964619866926338e-06,
+            "max_drift_m": 0.0010001325281336904,
+            "max_speed_mps": 0.016503211110830307,
+            "particles": 48124,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": true
+          }
+        ],
+        "gate": "max speed < 1mm/s and max drift < 0.02 cell over the stated physical duration",
+        "geometry": "voxel-walls-and-block",
+        "passed": false,
+        "protocol": "initially stationary 0.12m square domain, 0.08m water depth, gravity -9.81, open top, closed other faces; no flow or vorticity force",
+        "requested_duration_s": 0.10000000149011612,
+        "uses_sdf": true
+      }
+    },
+    "box-long": {
+      "baseline": {
+        "cases": [
+          {
+            "alpha": 0.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.021478752114464993,
+            "max_drift_m": 0.0981721580028534,
+            "max_speed_mps": 0.644199013710022,
+            "particles": 6400,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.02054717582307993,
+            "max_drift_m": 0.09331964701414108,
+            "max_speed_mps": 0.7229329943656921,
+            "particles": 51200,
+            "passed": false,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 0.011165623849479825,
+            "max_drift_m": 0.09090900421142578,
+            "max_speed_mps": 0.5121546387672424,
+            "particles": 51200,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 0.019842061695221295,
+            "max_drift_m": 0.09474137425422668,
+            "max_speed_mps": 0.6555255055427551,
+            "particles": 6400,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.021481027326806085,
+            "max_drift_m": 0.09816737473011017,
+            "max_speed_mps": 0.6439405083656311,
+            "particles": 6400,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 0.011131549197339628,
+            "max_drift_m": 0.09038034826517105,
+            "max_speed_mps": 0.5155017375946045,
+            "particles": 51200,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.028942736993872634,
+            "max_drift_m": 0.08056314289569855,
+            "max_speed_mps": 0.47744178771972656,
+            "particles": 6400,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.03538367224484931,
+            "max_drift_m": 0.08388524502515793,
+            "max_speed_mps": 0.5256644487380981,
+            "particles": 51200,
+            "passed": false,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 0.014225675616065815,
+            "max_drift_m": 0.08138317614793777,
+            "max_speed_mps": 0.48441407084465027,
+            "particles": 51200,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 0.027723127213246844,
+            "max_drift_m": 0.08001914620399475,
+            "max_speed_mps": 0.40914303064346313,
+            "particles": 6400,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 0.028944597922406126,
+            "max_drift_m": 0.08048471063375473,
+            "max_speed_mps": 0.47726717591285706,
+            "particles": 6400,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 0.014073612945307195,
+            "max_drift_m": 0.08162510395050049,
+            "max_speed_mps": 0.490342915058136,
+            "particles": 51200,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          }
+        ],
+        "gate": "max speed < 1mm/s and max drift < 0.02 cell over the stated physical duration",
+        "geometry": "voxel-walls",
+        "passed": false,
+        "protocol": "initially stationary 0.12m square domain, 0.08m water depth, gravity -9.81, open top, closed other faces; no flow or vorticity force",
+        "requested_duration_s": 0.5,
+        "uses_sdf": false
+      },
+      "final": {
+        "cases": [
+          {
+            "alpha": 0.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 7.3649559294106905e-09,
+            "max_drift_m": 6.1805360019207e-05,
+            "max_speed_mps": 0.0003779971448238939,
+            "particles": 6400,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 7.350548475018924e-09,
+            "max_drift_m": 6.607711839023978e-05,
+            "max_speed_mps": 0.00039796996861696243,
+            "particles": 51200,
+            "passed": true,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 2.2495485103788357e-06,
+            "max_drift_m": 0.0017396986950188875,
+            "max_speed_mps": 0.010969087481498718,
+            "particles": 51200,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 1.7808888475024982e-09,
+            "max_drift_m": 2.989494714711327e-05,
+            "max_speed_mps": 0.0001800676400307566,
+            "particles": 6400,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 9.776164999395149e-13,
+            "max_drift_m": 6.407499313354492e-07,
+            "max_speed_mps": 4.712426743935794e-06,
+            "particles": 6400,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 0.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 1.4678905351722033e-11,
+            "max_drift_m": 4.011349119537044e-06,
+            "max_speed_mps": 2.547725489421282e-05,
+            "particles": 51200,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 4.825510479784343e-11,
+            "max_drift_m": 5.5634050113440026e-06,
+            "max_speed_mps": 2.9479555450961925e-05,
+            "particles": 6400,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 5.007004415000194e-11,
+            "max_drift_m": 6.593301350221736e-06,
+            "max_speed_mps": 3.0480470741167665e-05,
+            "particles": 51200,
+            "passed": true,
+            "per_axis": 4,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 3.916858956507179e-09,
+            "max_drift_m": 0.00011022492253687233,
+            "max_speed_mps": 0.0008377869962714612,
+            "particles": 51200,
+            "passed": false,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 240,
+            "kinetic_energy_j": 4.7320568316283026e-12,
+            "max_drift_m": 2.550089902797481e-06,
+            "max_speed_mps": 1.8170881958212703e-05,
+            "particles": 6400,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 120,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 12,
+            "hz": 120,
+            "kinetic_energy_j": 1.029305726321044e-13,
+            "max_drift_m": 2.3276544425243628e-07,
+            "max_speed_mps": 1.2778227755916305e-06,
+            "particles": 6400,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          },
+          {
+            "alpha": 1.0,
+            "duration_s": 0.5,
+            "excluded_seed_points": 0,
+            "geometry": "voxel-walls",
+            "grid": 24,
+            "hz": 240,
+            "kinetic_energy_j": 2.2040630576032218e-13,
+            "max_drift_m": 5.066394805908203e-07,
+            "max_speed_mps": 3.1543786462862045e-06,
+            "particles": 51200,
+            "passed": true,
+            "per_axis": 2,
+            "pressure_sweeps": 480,
+            "refusal": null,
+            "uses_sdf": false
+          }
+        ],
+        "gate": "max speed < 1mm/s and max drift < 0.02 cell over the stated physical duration",
+        "geometry": "voxel-walls",
+        "passed": false,
+        "protocol": "initially stationary 0.12m square domain, 0.08m water depth, gravity -9.81, open top, closed other faces; no flow or vorticity force",
+        "requested_duration_s": 0.5,
+        "uses_sdf": false
+      }
+    }
+  },
+  "native": {
+    "before": {
+      "bulk_budget_passed": true,
+      "bulk_material_error_m3": 3.5949670973423054e-07,
+      "bulk_tolerance_m3": 0.0004124674634747587,
+      "detail_revision": 3,
+      "displayed_grains": 22496,
+      "dry_mass_budget_passed": true,
+      "dry_mass_error_kg": 0.0006471925880759954,
+      "dry_mass_tolerance_kg": 0.8074216227665284,
+      "exported_gold_g": 4.896943657516161,
+      "exported_material_m3": [
+        0.0,
+        0.9772887639245829,
+        0.0,
+        0.5373537032863105
+      ],
+      "failure": null,
+      "fluid_surface_ready": true,
+      "gold_balance_error_g": 3.637978807091713e-12,
+      "grains": 5863,
+      "initial_bulk_material_m3": 412.46746347475874,
+      "initial_dry_mass_kg": 807421.6227665284,
+      "inlet": {
+        "emission_clock": 0.03333333507180214,
+        "emitted": {
+          "gold_g": 0.024586065689432703,
+          "solid_m3": [
+            0.0,
+            0.0077434727770924324,
+            0.0,
+            0.002668268523416229
+          ]
+        },
+        "last_water_m3": 6.249640136957169e-05,
+        "pending": {
+          "gold_g": 1.1594628387567895e-05,
+          "solid_m3": [
+            0.0,
+            3.9650215660553414e-07,
+            0.0,
+            1.2661620162684645e-06
+          ]
+        },
+        "ready": {
+          "gold_g": 4.664815303608041e-09,
+          "solid_m3": [
+            0.0,
+            1.5952295030260458e-10,
+            0.0,
+            5.09409336194758e-10
+          ]
+        },
+        "sequence": 8633,
+        "withdrawn": {
+          "gold_g": 0.02459766498263569,
+          "solid_m3": [
+            0.0,
+            0.0077438694387717355,
+            0.0,
+            0.002669535194841847
+          ]
+        }
+      },
+      "last_worker_tick_ms": 147.492166,
+      "max_water_speed_mps": 1.0800000429153442,
+      "mean_fps": 40.252184852314365,
+      "one_second_ratios": [
+        0.19468310124099025,
+        0.19791849332394815,
+        0.195890552982893,
+        0.16501563894119625,
+        0.19785228255257756,
+        0.1641718986654039,
+        0.19656624385841123,
+        0.19754378401024142,
+        0.19954330568991505,
+        0.16607839115324055,
+        0.16455472505635924,
+        0.19685318122471704,
+        0.19881222330409704,
+        0.16439277396049243,
+        0.1999791957961976,
+        0.16592319426590446,
+        0.19495171928400898,
+        0.1659070491958862,
+        0.19353193136952898,
+        0.16548596740267385,
+        0.16479028403346202,
+        0.164044875867517,
+        0.132677069746342,
+        0.16628046818658884,
+        0.16601270284678796,
+        0.10737263303287231,
+        0.030893443016742385,
+        0.06601679258529555,
+        0.03244129016825722,
+        0.06577302033790075,
+        0.0892718997319557,
+        0.02898926579214353,
+        0.04810932276078409,
+        0.09074015398186507,
+        0.05421119058780588,
+        0.0984889629239859,
+        0.23240384631926111,
+        0.23053788142178278
+      ],
+      "outflow_particles": 10796,
+      "p95_frame_ms": 38.928916,
+      "passed": false,
+      "paused": false,
+      "phase_model": "conservative-validation",
+      "simulation_seconds": 5.900000307708979,
+      "simulation_wall_ratio": 0.14741516550346737,
+      "sluice_water_balance_error_m3": 0.0,
+      "slurry": {
+        "feed_grading": "Alluvial",
+        "fine_parcels_below_200um": 211,
+        "independently_resolved_grain_collisions": false,
+        "optical_grid_m": 0.029999999329447746,
+        "optics_calibrated": false,
+        "outlet_extinction_m1": 997.5420532226562,
+        "projected_suspended_fines_m3": 0.00023801412582379758,
+        "projected_water_m3": 0.01495749996223596,
+        "projection_fines_error_m3": 1.6263032587282567e-19,
+        "projection_water_error_m3": 1.734723475976807e-17,
+        "represented_grains": 2620364663.9124603,
+        "solver_parcels": 5863
+      },
+      "stored_water_m3": 12.780210483694837,
+      "terrain_fine_cells": 352,
+      "terrain_water_splats": 2724,
+      "wall_seconds": 40.023021292,
+      "warmup_seconds": 5,
+      "water_balance": {
+        "baseline_sim_time": 0.0,
+        "boundary_outflow_m3": 13.740893701474524,
+        "external_inflow_m3": 12.407987632788718,
+        "initial_stored_m3": 14.113124481402338,
+        "legacy_baseline": false
+      },
+      "water_balance_error_m3": -7.929021691666094e-06,
+      "water_cfl_speed_mps": 1.0799999237060547,
+      "water_mean_downstream_ms": 0.36943596601486206,
+      "water_near_cfl_limit": 772,
+      "water_particles": 119660,
+      "water_presentation": {
+        "buffer_underrun_frames": 0,
+        "interpolation_alpha": 0.14360691606998444,
+        "max_capture_ms": 16.111333,
+        "max_surface_build_ms": 481.508083,
+        "mean_capture_ms": 0.87874037745098,
+        "mean_surface_build_ms": 56.89998849753691,
+        "paired_render_particles": 66046,
+        "presented_sim_time": 103.23812561493581,
+        "surface_builds": 203
+      },
+      "worker_busy_fraction": 1.003264529257967,
+      "worker_mean_ms": 226.85693568361566,
+      "worker_packets": 177,
+      "worker_phases_mean_ms": [
+        6.105647152542371,
+        86.29720450282487,
+        119.00452379661014,
+        3.524539999999999,
+        8.73769898305085
+      ]
+    },
+    "after": {
+      "bulk_budget_passed": true,
+      "bulk_material_error_m3": 5.669111260431237e-07,
+      "bulk_tolerance_m3": 0.0004124674634699213,
+      "detail_revision": 4,
+      "displayed_grains": 22891,
+      "dry_mass_budget_passed": true,
+      "dry_mass_error_kg": 0.0010204093996435404,
+      "dry_mass_tolerance_kg": 0.8074216227578203,
+      "exported_gold_g": 4.917832792363356,
+      "exported_material_m3": [
+        0.0,
+        0.9996566719291087,
+        0.0,
+        0.5395982187536195
+      ],
+      "failure": null,
+      "fluid_surface_ready": true,
+      "gold_balance_error_g": 1.3642420526593924e-12,
+      "grains": 5931,
+      "initial_bulk_material_m3": 412.4674634699213,
+      "initial_dry_mass_kg": 807421.6227578203,
+      "inlet": {
+        "emission_clock": 0.03333333507180214,
+        "emitted": {
+          "gold_g": 0.025562000271680086,
+          "solid_m3": [
+            0.0,
+            0.007777148794986058,
+            0.0,
+            0.0027747900821423034
+          ]
+        },
+        "last_water_m3": 6.249547004699707e-05,
+        "pending": {
+          "gold_g": 1.0323394568685499e-05,
+          "solid_m3": [
+            0.0,
+            3.699775430492763e-07,
+            0.0,
+            1.1255824955367809e-06
+          ]
+        },
+        "ready": {
+          "gold_g": 3.4820631852798756e-09,
+          "solid_m3": [
+            0.0,
+            1.2479278724263454e-10,
+            0.0,
+            3.796570346726921e-10
+          ]
+        },
+        "sequence": 8809,
+        "withdrawn": {
+          "gold_g": 0.02557232714831207,
+          "solid_m3": [
+            0.0,
+            0.00777751889732164,
+            0.0,
+            0.0027759160442949013
+          ]
+        }
+      },
+      "last_worker_tick_ms": 154.92666599999998,
+      "max_water_speed_mps": 1.0800001621246338,
+      "mean_fps": 56.52174407361591,
+      "one_second_ratios": [
+        0.2296465800167139,
+        0.23313697609274786,
+        0.26591986670013873,
+        0.2634964014862377,
+        0.23331097681271307,
+        0.26569339015635585,
+        0.23155917752325525,
+        0.23164104344673678,
+        0.265352984287456,
+        0.2316878980506592,
+        0.23099568853824576,
+        0.2329198933595506,
+        0.23011727434082072,
+        0.2632978394841678,
+        0.23126205660563298,
+        0.2312512936738796,
+        0.23167470911240118,
+        0.2624251681872979,
+        0.23177234899767696,
+        0.19969319840599747,
+        0.1975018182271342,
+        0.231275523427609,
+        0.23083243967889386,
+        0.19834124137422202,
+        0.19772812260664363,
+        0.1983284158391709,
+        0.23246407515159495,
+        0.19773180418849115,
+        0.19948607604897645,
+        0.2280309513677604,
+        0.19787781225088488,
+        0.1974506510313529,
+        0.22864928383306193,
+        0.1993804937655406,
+        0.19928629148863272,
+        0.19958049223613247,
+        0.19665896304791533,
+        0.19821275908368602,
+        0.19793985244654916
+      ],
+      "outflow_particles": 10463,
+      "p95_frame_ms": 26.972458,
+      "passed": false,
+      "paused": false,
+      "phase_model": "conservative-validation",
+      "simulation_seconds": 8.933333799242973,
+      "simulation_wall_ratio": 0.22330739666158225,
+      "sluice_water_balance_error_m3": 0.0,
+      "slurry": {
+        "feed_grading": "Alluvial",
+        "fine_parcels_below_200um": 198,
+        "independently_resolved_grain_collisions": false,
+        "optical_grid_m": 0.029999999329447746,
+        "optics_calibrated": false,
+        "outlet_extinction_m1": 957.6021728515625,
+        "projected_suspended_fines_m3": 0.0002119845612897783,
+        "projected_water_m3": 0.013761874965254614,
+        "projection_fines_error_m3": 8.673617379884035e-19,
+        "projection_water_error_m3": 8.673617379884035e-18,
+        "represented_grains": 2580745474.844051,
+        "solver_parcels": 5931
+      },
+      "stored_water_m3": 12.809797576127357,
+      "terrain_fine_cells": 350,
+      "terrain_water_splats": 2721,
+      "wall_seconds": 40.004648,
+      "warmup_seconds": 5,
+      "water_balance": {
+        "baseline_sim_time": 0.0,
+        "boundary_outflow_m3": 14.059306051701215,
+        "external_inflow_m3": 12.75598704162985,
+        "initial_stored_m3": 14.113124481402338,
+        "legacy_baseline": false
+      },
+      "water_balance_error_m3": -7.895203616214985e-06,
+      "water_cfl_speed_mps": 1.0799999237060547,
+      "water_mean_downstream_ms": 0.40073832869529724,
+      "water_near_cfl_limit": 579,
+      "water_particles": 110095,
+      "water_presentation": {
+        "buffer_underrun_frames": 0,
+        "interpolation_alpha": 0.7243728041648865,
+        "max_capture_ms": 1.3882919999999999,
+        "max_surface_build_ms": 136.77562500000002,
+        "mean_capture_ms": 0.3867024589041093,
+        "mean_surface_build_ms": 34.98771245205479,
+        "paired_render_particles": 66079,
+        "presented_sim_time": 106.29081797002875,
+        "surface_builds": 292
+      },
+      "worker_busy_fraction": 0.9982370515296126,
+      "worker_mean_ms": 149.00791741417916,
+      "worker_packets": 268,
+      "worker_phases_mean_ms": [
+        3.183176585820894,
+        74.68716842910452,
+        62.69846401119405,
+        2.5147586828358195,
+        3.9234838358208974
+      ]
+    }
+  },
+  "motion": {
+    "views": [
+      {
+        "view": "sluice",
+        "passed": true,
+        "source_frames": 45,
+        "encoded_frames": 243,
+        "advancing_intervals": 44,
+        "recording_underruns": 0,
+        "max_first_display_delay_ms": 15.59854166666641,
+        "selected_frames": [
+          0,
+          9,
+          18,
+          26,
+          35,
+          44
+        ],
+        "sim_start": 107.4666722714901,
+        "sim_end": 108.43333898857236
+      },
+      {
+        "view": "outlet",
+        "passed": true,
+        "source_frames": 45,
+        "encoded_frames": 244,
+        "advancing_intervals": 44,
+        "recording_underruns": 0,
+        "max_first_display_delay_ms": 16.420458666666637,
+        "selected_frames": [
+          0,
+          9,
+          18,
+          26,
+          35,
+          44
+        ],
+        "sim_start": 107.5333389416337,
+        "sim_end": 108.53333899378777
+      },
+      {
+        "view": "river",
+        "passed": true,
+        "source_frames": 44,
+        "encoded_frames": 241,
+        "advancing_intervals": 43,
+        "recording_underruns": 0,
+        "max_first_display_delay_ms": 16.653209000000015,
+        "selected_frames": [
+          0,
+          9,
+          17,
+          26,
+          34,
+          43
+        ],
+        "sim_start": 107.6000056117773,
+        "sim_end": 108.70000566914678
+      }
+    ],
+    "encoded_frames": 728,
+    "fps": 60,
+    "all_source_frames_retained": true,
+    "frozen_equal_keys": [
+      "sim_time",
+      "fluid_clock",
+      "machine",
+      "surface",
+      "tracks",
+      "excavated_m3",
+      "flow",
+      "solver_steps",
+      "delivered_m3"
+    ],
+    "frozen_outlet_control": {
+      "crop_xywh": [
+        800,
+        400,
+        280,
+        230
+      ],
+      "byte_identical": true,
+      "differing_channels": 0
+    }
+  },
+  "checks": {
+    "cpu": {
+      "passed": 146,
+      "failed": 0,
+      "ignored": 88,
+      "log_sha256": "e17cadf5c2069a340e12dc6c122fa653479e42ee2bfa9c4569962918ac1a9522"
+    },
+    "static-ridge-after": {
+      "passed": 129,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "c0ec180bfac9cb396352c61f08227c683d7476c3ffe1e966088d9fb042e23f1e"
+    },
+    "gpu-final": {
+      "passed": 26,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "a35e31412a3f8b359e1800435704320594c4e82c0e8cbe52c8af3902e5ad6fcb"
+    },
+    "strict_maintained_clippy": true,
+    "maintained_fmt": true,
+    "legacy_lint": {
+      "diagnostics": 108,
+      "changed_primary": []
+    },
+    "signed_packaging": true
+  },
+  "review": {
+    "temporal_samples_per_view": 6,
+    "full_sluice_outlet_frames": true,
+    "entire_video_watched": false,
+    "manual_operator_replay": false,
+    "observations": "Waves and slurry advance through the riffles; the outlet falls continuously and reaches the wet ground. Broad wave envelopes, gravel/spray proxies and terrain/water art remain coarse. No pause or recording underrun appears in the three reviewed sequences."
+  },
+  "cleanup": {
+    "owned_game_encoder_jobs_remaining": 0,
+    "unrelated_playwright_tests": 1,
+    "shared_playwright_mcp": 19,
+    "shared_node_ecosystem": 73,
+    "new_panic_or_windowserver_reports": 0
+  },
+  "coupling": {
+    "legacy": [
+      {
+        "case": "water_transfer_flip",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": null,
+        "diameter": 0.0,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 1.0,
+        "fluid_momentum_change": [
+          -7.152557373046875e-07,
+          0.0,
+          0.0
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          99.20000076293945,
+          0.0,
+          0.0
+        ],
+        "momentum_before_relative_mass_mps": [
+          99.20000147819519,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          -7.152557373046875e-07,
+          0.0,
+          0.0
+        ],
+        "pressure_sweeps": 0,
+        "relative_to_initial_momentum": 7.210239179904704e-09,
+        "solid_final_velocity": [
+          -0.20000000298023224,
+          0.0,
+          0.0
+        ],
+        "solid_momentum_change": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "water_transfer_pic",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": null,
+        "diameter": 0.0,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 0.0,
+        "fluid_momentum_change": [
+          -0.07509280741214752,
+          0.0,
+          0.0
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          99.12490867078304,
+          0.0,
+          0.0
+        ],
+        "momentum_before_relative_mass_mps": [
+          99.20000147819519,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          -0.07509280741214752,
+          0.0,
+          0.0
+        ],
+        "pressure_sweeps": 0,
+        "relative_to_initial_momentum": 0.0007569839344070314,
+        "solid_final_velocity": [
+          0.11209815740585327,
+          0.0,
+          0.0
+        ],
+        "solid_momentum_change": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "water_transfer_blend",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": null,
+        "diameter": 0.0,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 0.9700000286102295,
+        "fluid_momentum_change": [
+          -0.0022550970315933228,
+          0.0,
+          0.0
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          99.1977463811636,
+          0.0,
+          0.0
+        ],
+        "momentum_before_relative_mass_mps": [
+          99.20000147819519,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          -0.0022550970315933228,
+          0.0,
+          0.0
+        ],
+        "pressure_sweeps": 0,
+        "relative_to_initial_momentum": 2.2732832641025794e-05,
+        "solid_final_velocity": [
+          -0.19063706696033478,
+          0.0,
+          0.0
+        ],
+        "solid_momentum_change": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "water_pressure_flip",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": null,
+        "diameter": 0.0,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 1.0,
+        "fluid_momentum_change": [
+          1.6083439886569977,
+          1.3649696484208107e-08,
+          3.2887328416109085e-09
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          100.80834546685219,
+          1.3649696484208107e-08,
+          3.2887328416109085e-09
+        ],
+        "momentum_before_relative_mass_mps": [
+          99.20000147819519,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          1.6083439886569977,
+          1.3649696484208107e-08,
+          3.2887328416109085e-09
+        ],
+        "pressure_sweeps": 80,
+        "relative_to_initial_momentum": 0.016213144805350858,
+        "solid_final_velocity": [
+          -0.16856110095977783,
+          5.820766091346741e-11,
+          4.0745362639427185e-10
+        ],
+        "solid_momentum_change": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "water_pressure_blend",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": null,
+        "diameter": 0.0,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 0.9700000286102295,
+        "fluid_momentum_change": [
+          1.6060912907123566,
+          1.3649696484208107e-08,
+          3.2887328416109085e-09
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          100.80609276890755,
+          1.3649696484208107e-08,
+          3.2887328416109085e-09
+        ],
+        "momentum_before_relative_mass_mps": [
+          99.20000147819519,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          1.6060912907123566,
+          1.3649696484208107e-08,
+          3.2887328416109085e-09
+        ],
+        "pressure_sweeps": 80,
+        "relative_to_initial_momentum": 0.016190436157053748,
+        "solid_final_velocity": [
+          -0.15919816493988037,
+          5.820766091346741e-11,
+          4.0745362639427185e-10
+        ],
+        "solid_momentum_change": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "mixed_dry_transfer_flip",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": 1.0,
+        "diameter": -0.0003000000142492354,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 1.0,
+        "fluid_momentum_change": [
+          -5.066394805908203e-07,
+          0.0,
+          0.0
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          93.9200005877018,
+          0.0,
+          0.0
+        ],
+        "momentum_before_relative_mass_mps": [
+          93.92000109434127,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          -5.066394805908203e-07,
+          0.0,
+          0.0
+        ],
+        "pressure_sweeps": 0,
+        "relative_to_initial_momentum": 5.394372601017203e-09,
+        "solid_final_velocity": [
+          -0.20000000298023224,
+          -0.0,
+          -0.0
+        ],
+        "solid_momentum_change": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "mixed_dry_transfer_blend",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": 1.0,
+        "diameter": -0.0003000000142492354,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 0.9700000286102295,
+        "fluid_momentum_change": [
+          -0.3024316877126694,
+          0.0,
+          0.0
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          93.6175694066286,
+          0.0,
+          0.0
+        ],
+        "momentum_before_relative_mass_mps": [
+          93.92000109434127,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          -0.3024316877126694,
+          0.0,
+          0.0
+        ],
+        "pressure_sweeps": 0,
+        "relative_to_initial_momentum": 0.003220098852095212,
+        "solid_final_velocity": [
+          -0.20000000298023224,
+          -0.0,
+          -0.0
+        ],
+        "solid_momentum_change": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "mixed_drag_flip",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": 0.9999998719765929,
+        "diameter": 0.0003000000142492354,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 1.0,
+        "fluid_momentum_change": [
+          -5.066394805908203e-07,
+          0.0,
+          0.0
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          101.83479460604448,
+          0.0,
+          0.0
+        ],
+        "momentum_before_relative_mass_mps": [
+          93.92000109434127,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          7.914793511703209,
+          0.0,
+          0.0
+        ],
+        "pressure_sweeps": 0,
+        "relative_to_initial_momentum": 0.08427165054813952,
+        "solid_final_velocity": [
+          -0.013330339454114437,
+          0.0,
+          0.0
+        ],
+        "solid_momentum_change": [
+          7.914794018342697,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "mixed_drag_blend",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": 0.9263908042613934,
+        "diameter": 0.0003000000142492354,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 0.9700000286102295,
+        "fluid_momentum_change": [
+          -0.3024316877126694,
+          0.0,
+          0.0
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          101.5323634249713,
+          0.0,
+          0.0
+        ],
+        "momentum_before_relative_mass_mps": [
+          93.92000109434127,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          7.61236233063002,
+          0.0,
+          0.0
+        ],
+        "pressure_sweeps": 0,
+        "relative_to_initial_momentum": 0.0810515570904169,
+        "solid_final_velocity": [
+          -0.013330339454114437,
+          0.0,
+          0.0
+        ],
+        "solid_momentum_change": [
+          7.914794018342697,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "mixed_full_120hz",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": 0.9999999999999998,
+        "diameter": 0.0003000000142492354,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 0.9700000286102295,
+        "fluid_momentum_change": [
+          2.0110023617744446,
+          -7.409835234284401e-08,
+          -1.2863893061876297e-08
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          103.84579747445841,
+          -7.409835234284401e-08,
+          -1.2863893061876297e-08
+        ],
+        "momentum_before_relative_mass_mps": [
+          93.92000109434127,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          9.925796380117134,
+          -7.409835234284401e-08,
+          -1.2863893061876297e-08
+        ],
+        "pressure_sweeps": 80,
+        "relative_to_initial_momentum": 0.10568352070339966,
+        "solid_final_velocity": [
+          -0.013330339454114437,
+          0.0,
+          0.0
+        ],
+        "solid_momentum_change": [
+          7.914794018342697,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "mixed_full_240hz",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": 0.9999999999999999,
+        "diameter": 0.0003000000142492354,
+        "dt": 0.004166666883975267,
+        "flip_ratio": 0.9700000286102295,
+        "fluid_momentum_change": [
+          2.0110023617744446,
+          -7.409835234284401e-08,
+          -1.2863893061876297e-08
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          100.50555488717515,
+          -7.409835234284401e-08,
+          -1.2863893061876297e-08
+        ],
+        "momentum_before_relative_mass_mps": [
+          93.92000109434127,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          6.585553792833878,
+          -7.409835234284401e-08,
+          -1.2863893061876297e-08
+        ],
+        "pressure_sweeps": 80,
+        "relative_to_initial_momentum": 0.07011875762457441,
+        "solid_final_velocity": [
+          -0.09210964292287827,
+          0.0,
+          0.0
+        ],
+        "solid_momentum_change": [
+          4.574551431059433,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "coincident_drag_flip",
+        "coincident": true,
+        "combined_phase_imbalance_fraction": 1.0,
+        "diameter": 0.0003000000142492354,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 1.0,
+        "fluid_momentum_change": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          101.83758064123542,
+          0.0,
+          0.0
+        ],
+        "momentum_before_relative_mass_mps": [
+          93.92000109434127,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          7.917579546894146,
+          0.0,
+          0.0
+        ],
+        "pressure_sweeps": 0,
+        "relative_to_initial_momentum": 0.08430131446592566,
+        "solid_final_velocity": [
+          -0.013264643028378487,
+          0.0,
+          0.0
+        ],
+        "solid_momentum_change": [
+          7.917579546894146,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "coincident_drag_blend",
+        "coincident": true,
+        "combined_phase_imbalance_fraction": 0.8879550125189737,
+        "diameter": 0.0003000000142492354,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 0.9700000286102295,
+        "fluid_momentum_change": [
+          -0.46988677978515625,
+          0.0,
+          0.0
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          101.36769386145026,
+          0.0,
+          0.0
+        ],
+        "momentum_before_relative_mass_mps": [
+          93.92000109434127,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          7.44769276710899,
+          0.0,
+          0.0
+        ],
+        "pressure_sweeps": 0,
+        "relative_to_initial_momentum": 0.07929826107676352,
+        "solid_final_velocity": [
+          -0.013264643028378487,
+          0.0,
+          0.0
+        ],
+        "solid_momentum_change": [
+          7.917579546894146,
+          0.0,
+          0.0
+        ]
+      }
+    ],
+    "conservative": [
+      {
+        "case": "water_transfer_flip",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": null,
+        "diameter": 0.0,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 1.0,
+        "fluid_momentum_change": [
+          3.725290298461914e-07,
+          0.0,
+          0.0
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          99.20000185072422,
+          0.0,
+          0.0
+        ],
+        "momentum_before_relative_mass_mps": [
+          99.20000147819519,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          3.725290298461914e-07,
+          0.0,
+          0.0
+        ],
+        "pressure_sweeps": 0,
+        "relative_to_initial_momentum": 3.755332906200367e-09,
+        "solid_final_velocity": [
+          -0.20000000298023224,
+          0.0,
+          0.0
+        ],
+        "solid_momentum_change": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "water_transfer_pic",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": null,
+        "diameter": 0.0,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 0.0,
+        "fluid_momentum_change": [
+          3.725290298461914e-07,
+          0.0,
+          0.0
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          99.20000185072422,
+          0.0,
+          0.0
+        ],
+        "momentum_before_relative_mass_mps": [
+          99.20000147819519,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          3.725290298461914e-07,
+          0.0,
+          0.0
+        ],
+        "pressure_sweeps": 0,
+        "relative_to_initial_momentum": 3.755332906200367e-09,
+        "solid_final_velocity": [
+          0.112211674451828,
+          0.0,
+          0.0
+        ],
+        "solid_momentum_change": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "water_transfer_blend",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": null,
+        "diameter": 0.0,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 0.9700000286102295,
+        "fluid_momentum_change": [
+          -1.1175870895385742e-06,
+          0.0,
+          0.0
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          99.2000003606081,
+          0.0,
+          0.0
+        ],
+        "momentum_before_relative_mass_mps": [
+          99.20000147819519,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          -1.1175870895385742e-06,
+          0.0,
+          0.0
+        ],
+        "pressure_sweeps": 0,
+        "relative_to_initial_momentum": 1.12659987186011e-08,
+        "solid_final_velocity": [
+          -0.1906336545944214,
+          0.0,
+          0.0
+        ],
+        "solid_momentum_change": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "water_pressure_flip",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": null,
+        "diameter": 0.0,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 1.0,
+        "fluid_momentum_change": [
+          3.6656856536865234e-06,
+          -5.555921234190464e-08,
+          3.835884854197502e-08
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          99.20000514388084,
+          -5.555921234190464e-08,
+          3.835884854197502e-08
+        ],
+        "momentum_before_relative_mass_mps": [
+          99.20000147819519,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          3.6656856536865234e-06,
+          -5.555921234190464e-08,
+          3.835884854197502e-08
+        ],
+        "pressure_sweeps": 80,
+        "relative_to_initial_momentum": 3.6958742834048505e-08,
+        "solid_final_velocity": [
+          -0.1778571456670761,
+          1.280568540096283e-09,
+          1.7462298274040222e-10
+        ],
+        "solid_momentum_change": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "water_pressure_blend",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": null,
+        "diameter": 0.0,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 0.9700000286102295,
+        "fluid_momentum_change": [
+          4.932284355163574e-06,
+          -5.555921234190464e-08,
+          3.835884854197502e-08
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          99.20000641047955,
+          -5.555921234190464e-08,
+          3.835884854197502e-08
+        ],
+        "momentum_before_relative_mass_mps": [
+          99.20000147819519,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          4.932284355163574e-06,
+          -5.555921234190464e-08,
+          3.835884854197502e-08
+        ],
+        "pressure_sweeps": 80,
+        "relative_to_initial_momentum": 4.9725265531954974e-08,
+        "solid_final_velocity": [
+          -0.16849081218242645,
+          1.280568540096283e-09,
+          1.7462298274040222e-10
+        ],
+        "solid_momentum_change": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "mixed_dry_transfer_flip",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": 1.0,
+        "diameter": -0.0003000000142492354,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 1.0,
+        "fluid_momentum_change": [
+          6.407499313354492e-07,
+          0.0,
+          0.0
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          93.92000299870972,
+          0.0,
+          0.0
+        ],
+        "momentum_before_relative_mass_mps": [
+          93.92000109434127,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          1.9043684460484656e-06,
+          0.0,
+          0.0
+        ],
+        "pressure_sweeps": 0,
+        "relative_to_initial_momentum": 2.027649514330345e-08,
+        "solid_final_velocity": [
+          -0.19999997317790985,
+          0.0,
+          0.0
+        ],
+        "solid_momentum_change": [
+          1.2636185147130163e-06,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "mixed_dry_transfer_blend",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": 1.0,
+        "diameter": -0.0003000000142492354,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 0.9700000286102295,
+        "fluid_momentum_change": [
+          6.407499313354492e-07,
+          0.0,
+          0.0
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          93.92000299870972,
+          0.0,
+          0.0
+        ],
+        "momentum_before_relative_mass_mps": [
+          93.92000109434127,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          1.9043684460484656e-06,
+          0.0,
+          0.0
+        ],
+        "pressure_sweeps": 0,
+        "relative_to_initial_momentum": 2.027649514330345e-08,
+        "solid_final_velocity": [
+          -0.19999997317790985,
+          0.0,
+          0.0
+        ],
+        "solid_momentum_change": [
+          1.2636185147130163e-06,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "mixed_drag_flip",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": 5.856766679652199e-08,
+        "diameter": 0.0003000000142492354,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 1.0,
+        "fluid_momentum_change": [
+          -5.086558632552624,
+          0.0,
+          0.0
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          93.92000169015705,
+          0.0,
+          0.0
+        ],
+        "momentum_before_relative_mass_mps": [
+          93.92000109434127,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          5.958157771601691e-07,
+          0.0,
+          0.0
+        ],
+        "pressure_sweeps": 0,
+        "relative_to_initial_momentum": 6.343864674380495e-09,
+        "solid_final_velocity": [
+          -0.08003398776054382,
+          0.0,
+          0.0
+        ],
+        "solid_momentum_change": [
+          5.086559228368401,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "mixed_drag_blend",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": 7.175049453926264e-08,
+        "diameter": 0.0003000000142492354,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 0.9700000286102295,
+        "fluid_momentum_change": [
+          -5.086558498442173,
+          0.0,
+          0.0
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          93.9200018242675,
+          0.0,
+          0.0
+        ],
+        "momentum_before_relative_mass_mps": [
+          93.92000109434127,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          7.29926227904798e-07,
+          0.0,
+          0.0
+        ],
+        "pressure_sweeps": 0,
+        "relative_to_initial_momentum": 7.771786833473284e-09,
+        "solid_final_velocity": [
+          -0.08003398776054382,
+          0.0,
+          0.0
+        ],
+        "solid_momentum_change": [
+          5.086559228368401,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "mixed_full_120hz",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": 6.8726876864849e-07,
+        "diameter": 0.0003000000142492354,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 0.9700000286102295,
+        "fluid_momentum_change": [
+          -5.915816068649292,
+          3.463355824351311e-08,
+          1.5745172277092934e-08
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          93.92000922571529,
+          2.9697548420415387e-08,
+          3.7957216481032674e-08
+        ],
+        "momentum_before_relative_mass_mps": [
+          93.92000109434127,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          8.13137401678432e-06,
+          2.9697548420415387e-08,
+          3.7957216481032674e-08
+        ],
+        "pressure_sweeps": 80,
+        "relative_to_initial_momentum": 8.65791816843626e-08,
+        "solid_final_velocity": [
+          -0.060475852340459824,
+          -1.1641532182693481e-10,
+          5.238689482212067e-10
+        ],
+        "solid_momentum_change": [
+          5.915824200023309,
+          -4.93600982309772e-09,
+          2.221204420393974e-08
+        ]
+      },
+      {
+        "case": "mixed_full_240hz",
+        "coincident": false,
+        "combined_phase_imbalance_fraction": 4.845956002143815e-07,
+        "diameter": 0.0003000000142492354,
+        "dt": 0.004166666883975267,
+        "flip_ratio": 0.9700000286102295,
+        "fluid_momentum_change": [
+          -4.110869899392128,
+          -4.5780325308442116e-08,
+          -4.46452759206295e-08
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          93.9200050778411,
+          -4.7014327764216546e-08,
+          -5.945330538992266e-08
+        ],
+        "momentum_before_relative_mass_mps": [
+          93.92000109434127,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          3.983499823334569e-06,
+          -4.7014327764216546e-08,
+          -5.945330538992266e-08
+        ],
+        "pressure_sweeps": 80,
+        "relative_to_initial_momentum": 4.2421431181444736e-08,
+        "solid_final_velocity": [
+          -0.10304543375968933,
+          -2.9103830456733704e-11,
+          -3.4924596548080444e-10
+        ],
+        "solid_momentum_change": [
+          4.110873882891951,
+          -1.23400245577443e-09,
+          -1.480802946929316e-08
+        ]
+      },
+      {
+        "case": "coincident_drag_flip",
+        "coincident": true,
+        "combined_phase_imbalance_fraction": 1.275771529374254e-06,
+        "diameter": 0.0003000000142492354,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 1.0,
+        "fluid_momentum_change": [
+          -6.345359802246094,
+          0.0,
+          0.0
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          93.92001728482069,
+          0.0,
+          0.0
+        ],
+        "momentum_before_relative_mass_mps": [
+          93.92000109434127,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          1.6190479414035508e-05,
+          0.0,
+          0.0
+        ],
+        "pressure_sweeps": 0,
+        "relative_to_initial_momentum": 1.7238585205905615e-07,
+        "solid_final_velocity": [
+          -0.05034491419792175,
+          0.0,
+          0.0
+        ],
+        "solid_momentum_change": [
+          6.345375992725508,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "case": "coincident_drag_blend",
+        "coincident": true,
+        "combined_phase_imbalance_fraction": 1.275771529374254e-06,
+        "diameter": 0.0003000000142492354,
+        "dt": 0.008333333767950535,
+        "flip_ratio": 0.9700000286102295,
+        "fluid_momentum_change": [
+          -6.345359802246094,
+          0.0,
+          0.0
+        ],
+        "gravity": 0,
+        "momentum_after_relative_mass_mps": [
+          93.92001728482069,
+          0.0,
+          0.0
+        ],
+        "momentum_before_relative_mass_mps": [
+          93.92000109434127,
+          0.0,
+          0.0
+        ],
+        "momentum_residual": [
+          1.6190479414035508e-05,
+          0.0,
+          0.0
+        ],
+        "pressure_sweeps": 0,
+        "relative_to_initial_momentum": 1.7238585205905615e-07,
+        "solid_final_velocity": [
+          -0.05034491419792175,
+          0.0,
+          0.0
+        ],
+        "solid_momentum_change": [
+          6.345375992725508,
+          0.0,
+          0.0
+        ]
+      }
+    ]
+  },
+  "legacy_coupling_exact_match": true,
+  "retained_failures": [
+    "pre-binding/",
+    "pre-outer-face/",
+    "pre-ridge/",
+    "static-ridge-before.log",
+    "contact-reproduction.log",
+    "contact-failure.json"
+  ],
+  "rejected_evidence": {
+    "directory": "baseline-cache-reuse",
+    "reason": "archive mtimes allowed shared-target candidate artifact reuse; rejected unexpected baseline pass, then refreshed isolated source timestamps and verified compilation from its actual directory. Candidate local sources were likewise refreshed and rebuilt before final diagnostics, GPU tests and native packaging."
+  },
+  "contact_failure": {
+    "sim_time": 5.033333595842123,
+    "substep": 2,
+    "residual": 0.039618462324142456,
+    "worst": {
+      "angular_velocity": [
+        3.9050447940826416,
+        1.0795596837997437,
+        -0.138694167137146
+      ],
+      "bounding_radius": 0.005623918492347002,
+      "distance": 0.005401107482612133,
+      "gradient": [
+        0.7619947195053101,
+        0.14427195489406586,
+        0.16057458519935608
+      ],
+      "index": 7,
+      "inertia_inv": [
+        66720480.0,
+        0.0,
+        0.0,
+        0.0,
+        66720480.0,
+        0.0,
+        0.0,
+        0.0,
+        66720480.0
+      ],
+      "local_offsets": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "mass": 0.0011846848065033555,
+      "particle_mass": 0.0011846848065033555,
+      "point": [
+        0.6949998140335083,
+        0.18778127431869507,
+        0.01749863661825657
+      ],
+      "position": [
+        0.6949998140335083,
+        0.18778127431869507,
+        0.01749863661825657
+      ],
+      "radius": 0.005623918492347002,
+      "relative": 0.039618462324142456,
+      "rotation": [
+        0.7098410725593567,
+        0.3716210126876831,
+        0.5566620230674744,
+        -0.21943341195583344
+      ],
+      "sphere": 0,
+      "velocity": [
+        -0.005695042200386524,
+        -0.026280580088496208,
+        -0.004895929712802172
+      ]
+    },
+    "grid": [
+      162,
+      52,
+      40
+    ],
+    "cell_size": 0.009999999776482582
+  },
+  "contact_fixture_sha256": "61c118d6e240034dc7f003933b929b33ce791cef0bf6dbe9e657888a303a39f7",
+  "media_sha256": {
+    "2026-10-23-internal-wall.mp4": "b9bdda3a16ac38c5b81d0b3072601f65e52300d4ce7f6a4a3fb069a18cadd581",
+    "2026-10-23-internal-wall.views.png": "f4f1349ad551cdbb47b2a4f5578d17cc92318feed9506d752da3aafcf31a6bcd",
+    "2026-10-23-internal-wall.sluice.png": "f16b12a28232db741f6d27fc5ad69e8b42f5c49995d43b7ba46160b3dec5ecbf"
+  }
+}

@@ -1,0 +1,1933 @@
+diff --git a/vendor/rapier3d/src/dynamics/solver/contact_constraint/contact_with_coulomb_friction.rs b/vendor/rapier3d/src/dynamics/solver/contact_constraint/contact_with_coulomb_friction.rs
+--- a/vendor/rapier3d/src/dynamics/solver/contact_constraint/contact_with_coulomb_friction.rs
++++ b/vendor/rapier3d/src/dynamics/solver/contact_constraint/contact_with_coulomb_friction.rs
+@@ -0,0 +1,3 @@
++#[cfg(all(test, feature = "dim3", feature = "f32"))]
++#[path = "rigid_anchor_objectivity.rs"]
++mod rigid_anchor_objectivity;
+@@ -13 +16 @@
+-use crate::math::{Real, SimdReal, TangentImpulse, DIM, MAX_MANIFOLD_POINTS, SIMD_WIDTH};
++use crate::math::{DIM, MAX_MANIFOLD_POINTS, Real, SIMD_WIDTH, SimdReal, TangentImpulse};
+@@ -55,0 +59,5 @@
++    #[cfg(feature = "contact-work-audit")]
++    pub(crate) fn audit_infos(&self) -> &[CoulombContactPointInfos<SimdReal>; MAX_MANIFOLD_POINTS] {
++        &self.infos
++    }
++
+diff --git a/vendor/rapier3d/src/dynamics/solver/contact_work_audit.rs b/vendor/rapier3d/src/dynamics/solver/contact_work_audit.rs
+--- a/vendor/rapier3d/src/dynamics/solver/contact_work_audit.rs
++++ b/vendor/rapier3d/src/dynamics/solver/contact_work_audit.rs
+@@ -1 +1 @@
+-//! Optional read-only work ledger for single-threaded articulated contacts.
++//! Optional read-only work ledger for single-threaded contact blocks.
+@@ -16,0 +17,2 @@
++pub(crate) mod rigid_work;
++
+@@ -18,0 +21 @@
++    static COLLIDERS: RefCell<Option<std::collections::HashMap<crate::geometry::ColliderHandle, rigid_work::ColliderSnapshot>>> = const { RefCell::new(None) };
+@@ -24,0 +28,3 @@
++    rigid_contacts: Vec<rigid_work::RigidContactWork>,
++    rigid_scope: &'static str,
++    twist_selected_unobserved: bool,
+@@ -32,0 +39,20 @@
++    /// Number of observed non-padding rigid Coulomb lane/manifold blocks.
++    pub fn rigid_len(&self) -> usize {
++        self.rigid_contacts.len()
++    }
++    /// Iterate rigid lane/manifold records without cloning the full report.
++    pub fn iter_rigid_contacts(&self) -> impl Iterator<Item = &rigid_work::RigidContactWork> {
++        self.rigid_contacts.iter()
++    }
++    /// Iterate generic block records without cloning the full report.
++    pub fn iter_generic_contacts(&self) -> impl Iterator<Item = &ContactWork> {
++        self.contacts.iter()
++    }
++    /// Iterate the small fixed-stage energy observations.
++    pub fn iter_phases(&self) -> impl Iterator<Item = &PhaseEnergy> {
++        self.phases.iter()
++    }
++    /// Stable body-handle scope of each observed island.
++    pub fn islands(&self) -> &[Vec<(u32, u32)>] {
++        &self.islands
++    }
+@@ -39 +65 @@
+-struct PhaseEnergy {
++pub struct PhaseEnergy {
+@@ -86,0 +113,20 @@
++    record_inner(None, run)
++}
++
++/// Record contacts with immutable collider parent/local-pose metadata captured
++/// before the run. Current world collider poses are derived at each rigid block
++/// from the live solver CoM, body local CoM and this collider-local transform.
++/// Collider attachments/local poses must remain unchanged during the run.
++pub fn record_with_colliders<R>(
++    colliders: &crate::geometry::ColliderSet,
++    run: impl FnOnce() -> R,
++) -> (R, WorkReport) {
++    record_inner(Some(rigid_work::capture_colliders(colliders)), run)
++}
++
++fn record_inner<R>(
++    colliders: Option<
++        std::collections::HashMap<crate::geometry::ColliderHandle, rigid_work::ColliderSnapshot>,
++    >,
++    run: impl FnOnce() -> R,
++) -> (R, WorkReport) {
+@@ -96 +142,4 @@
+-        *r = Some(WorkReport::default());
++        *r = Some(WorkReport {
++            rigid_scope: "rigid_coulomb warmstart/projection/solve only; twist/restitution blocks unobserved",
++            ..WorkReport::default()
++        });
+@@ -97,0 +147 @@
++    COLLIDERS.with(|c| *c.borrow_mut() = colliders);
+@@ -103,0 +154,3 @@
++            COLLIDERS.with(|c| {
++                c.borrow_mut().take();
++            });
+@@ -110,0 +164,8 @@
++}
++
++pub(crate) fn note_rigid_policy(twist: bool) {
++    RECORDING.with(|r| {
++        if let Some(report) = r.borrow_mut().as_mut() {
++            report.twist_selected_unobserved |= twist;
++        }
++    });
+diff --git a/vendor/rapier3d/src/dynamics/solver/manifold_store.rs b/vendor/rapier3d/src/dynamics/solver/manifold_store.rs
+--- a/vendor/rapier3d/src/dynamics/solver/manifold_store.rs
++++ b/vendor/rapier3d/src/dynamics/solver/manifold_store.rs
+@@ -130,0 +131,16 @@
++    /// Read-only diagnostic identity; cluster subshape ids do not establish
++    /// ownership of individual points merged from several child manifolds.
++    #[cfg(feature = "contact-work-audit")]
++    pub(crate) fn audit_pair_metadata(
++        &self,
++        r: ContactRef,
++    ) -> ([crate::geometry::ColliderHandle; 2], bool) {
++        assert!(!r.is_padding());
++        let pair = self.pair_ptr(r.edge);
++        unsafe {
++            let colliders = [(*pair).collider1, (*pair).collider2];
++            let rigid = rigid_contacts_ptr(pair);
++            (colliders, !(*rigid).solver_clusters.is_empty())
++        }
++    }
++
+diff --git a/vendor/rapier3d/src/dynamics/solver/staged_island_solver/mod.rs b/vendor/rapier3d/src/dynamics/solver/staged_island_solver/mod.rs
+--- a/vendor/rapier3d/src/dynamics/solver/staged_island_solver/mod.rs
++++ b/vendor/rapier3d/src/dynamics/solver/staged_island_solver/mod.rs
+@@ -368,0 +369,37 @@
++
++#[cfg(feature = "contact-work-audit")]
++#[allow(clippy::too_many_arguments)]
++unsafe fn audit_rigid_before(
++    ctx: &SharedCtx<'_>,
++    c: &ContactWithCoulombFriction<crate::math::SimdReal>,
++    builder: *const ContactWithCoulombFrictionBuilder,
++    solver: &crate::dynamics::solver::solver_body::SolverBodies,
++    params: &IntegrationParameters,
++    stage: &'static str,
++    unbiased: bool,
++    time: Real,
++    chunk: usize,
++    solve_friction: bool,
++) -> Option<crate::contact_work_audit::rigid_work::Snapshot> {
++    // Do not form ANY extra references from shared worker pointers unless
++    // recording is active. The recorder refuses parallel builds.
++    if !crate::contact_work_audit::enabled() {
++        return None;
++    }
++    assert_eq!(ctx.sync.num_workers, 1);
++    crate::contact_work_audit::rigid_work::before(
++        c,
++        unsafe { &*builder },
++        solver,
++        ctx.island_bodies,
++        unsafe { &*ctx.bodies },
++        unsafe { &*ctx.multibodies },
++        ctx.store,
++        params,
++        stage,
++        unbiased,
++        time,
++        chunk,
++        solve_friction,
++    )
++}
+diff --git a/vendor/rapier3d/src/dynamics/solver/staged_island_solver/solve.rs b/vendor/rapier3d/src/dynamics/solver/staged_island_solver/solve.rs
+--- a/vendor/rapier3d/src/dynamics/solver/staged_island_solver/solve.rs
++++ b/vendor/rapier3d/src/dynamics/solver/staged_island_solver/solve.rs
+@@ -157,0 +158,15 @@
++            #[cfg(feature = "contact-work-audit")]
++            let observation = unsafe {
++                super::audit_rigid_before(
++                    ctx,
++                    c,
++                    ctx.coulomb_builders.add(chunk_id),
++                    solver_bodies,
++                    params,
++                    "solve",
++                    wo_bias,
++                    solved_dt,
++                    chunk_id,
++                    solve_friction,
++                )
++            };
+@@ -158,0 +174,2 @@
++            #[cfg(feature = "contact-work-audit")]
++            crate::contact_work_audit::rigid_work::after(observation, c, solver_bodies);
+@@ -362,11 +379,16 @@
+-                let observation = crate::contact_work_audit::before(
+-                    c,
+-                    contacts.generic_velocity_constraints_builder[index].audit_handles(),
+-                    &vs.solver_bodies,
+-                    &vs.generic_solver_vels,
+-                    unsafe { &*ctx.bodies },
+-                    unsafe { &*ctx.multibodies },
+-                    wo_bias,
+-                    solved_dt,
+-                    "solve",
+-                );
++                let observation = if crate::contact_work_audit::enabled() {
++                    assert_eq!(sync.num_workers, 1);
++                    crate::contact_work_audit::before(
++                        c,
++                        contacts.generic_velocity_constraints_builder[index].audit_handles(),
++                        &vs.solver_bodies,
++                        &vs.generic_solver_vels,
++                        unsafe { &*ctx.bodies },
++                        unsafe { &*ctx.multibodies },
++                        wo_bias,
++                        solved_dt,
++                        "solve",
++                    )
++                } else {
++                    None
++                };
+diff --git a/vendor/rapier3d/src/dynamics/solver/staged_island_solver/worker.rs b/vendor/rapier3d/src/dynamics/solver/staged_island_solver/worker.rs
+--- a/vendor/rapier3d/src/dynamics/solver/staged_island_solver/worker.rs
++++ b/vendor/rapier3d/src/dynamics/solver/staged_island_solver/worker.rs
+@@ -90,0 +91,2 @@
++    #[cfg(feature = "contact-work-audit")]
++    crate::contact_work_audit::note_rigid_policy(ctx.use_twist);
+@@ -630,0 +633,15 @@
++                                #[cfg(feature = "contact-work-audit")]
++                                let observation = unsafe {
++                                    super::audit_rigid_before(
++                                        ctx,
++                                        constraint,
++                                        builder,
++                                        solver_bodies,
++                                        params,
++                                        "warmstart",
++                                        false,
++                                        solved_dt,
++                                        chunk_id,
++                                        true,
++                                    )
++                                };
+@@ -631,0 +649,6 @@
++                                #[cfg(feature = "contact-work-audit")]
++                                crate::contact_work_audit::rigid_work::after(
++                                    observation,
++                                    constraint,
++                                    solver_bodies,
++                                );
+@@ -634,0 +658,15 @@
++                                    #[cfg(feature = "contact-work-audit")]
++                                    let observation = unsafe {
++                                        super::audit_rigid_before(
++                                            ctx,
++                                            constraint,
++                                            builder,
++                                            solver_bodies,
++                                            params,
++                                            "projection",
++                                            true,
++                                            solved_dt,
++                                            chunk_id,
++                                            true,
++                                        )
++                                    };
+@@ -635,0 +674,6 @@
++                                    #[cfg(feature = "contact-work-audit")]
++                                    crate::contact_work_audit::rigid_work::after(
++                                        observation,
++                                        constraint,
++                                        solver_bodies,
++                                    );
+@@ -677,0 +722,15 @@
++                            #[cfg(feature = "contact-work-audit")]
++                            let observation = unsafe {
++                                super::audit_rigid_before(
++                                    ctx,
++                                    constraint,
++                                    builder,
++                                    solver_bodies,
++                                    params,
++                                    "warmstart",
++                                    false,
++                                    solved_dt,
++                                    chunk_id,
++                                    true,
++                                )
++                            };
+@@ -678,0 +738,6 @@
++                            #[cfg(feature = "contact-work-audit")]
++                            crate::contact_work_audit::rigid_work::after(
++                                observation,
++                                constraint,
++                                solver_bodies,
++                            );
+@@ -679,0 +745,15 @@
++                                #[cfg(feature = "contact-work-audit")]
++                                let observation = unsafe {
++                                    super::audit_rigid_before(
++                                        ctx,
++                                        constraint,
++                                        builder,
++                                        solver_bodies,
++                                        params,
++                                        "projection",
++                                        true,
++                                        solved_dt,
++                                        chunk_id,
++                                        true,
++                                    )
++                                };
+@@ -680,0 +761,6 @@
++                                #[cfg(feature = "contact-work-audit")]
++                                crate::contact_work_audit::rigid_work::after(
++                                    observation,
++                                    constraint,
++                                    solver_bodies,
++                                );
+@@ -694,11 +780,16 @@
+-                        let observation = crate::contact_work_audit::before(
+-                            c,
+-                            builder.audit_handles(),
+-                            &vs.solver_bodies,
+-                            &vs.generic_solver_vels,
+-                            unsafe { &*ctx.bodies },
+-                            multibodies,
+-                            false,
+-                            solved_dt,
+-                            "warmstart",
+-                        );
++                        let observation = if crate::contact_work_audit::enabled() {
++                            assert_eq!(sync.num_workers, 1);
++                            crate::contact_work_audit::before(
++                                c,
++                                builder.audit_handles(),
++                                &vs.solver_bodies,
++                                &vs.generic_solver_vels,
++                                unsafe { &*ctx.bodies },
++                                multibodies,
++                                false,
++                                solved_dt,
++                                "warmstart",
++                            )
++                        } else {
++                            None
++                        };
+@@ -720,11 +811,16 @@
+-                            let observation = crate::contact_work_audit::before(
+-                                c,
+-                                builder.audit_handles(),
+-                                &vs.solver_bodies,
+-                                &vs.generic_solver_vels,
+-                                unsafe { &*ctx.bodies },
+-                                multibodies,
+-                                true,
+-                                solved_dt,
+-                                "projection",
+-                            );
++                            let observation = if crate::contact_work_audit::enabled() {
++                                assert_eq!(sync.num_workers, 1);
++                                crate::contact_work_audit::before(
++                                    c,
++                                    builder.audit_handles(),
++                                    &vs.solver_bodies,
++                                    &vs.generic_solver_vels,
++                                    unsafe { &*ctx.bodies },
++                                    multibodies,
++                                    true,
++                                    solved_dt,
++                                    "projection",
++                                )
++                            } else {
++                                None
++                            };
+diff --git a/crates/mining-sim/src/articulation/retained/tests/rigid_geometry.rs b/crates/mining-sim/src/articulation/retained/tests/rigid_geometry.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/mining-sim/src/articulation/retained/tests/rigid_geometry.rs
+@@ -0,0 +1,416 @@
++//! Independent registered-geometry witness audit at captured solver poses.
++//! Cluster subshape ids and engine contact/distance queries are never inputs.
++use super::*;
++use rapier3d::parry::shape::Shape;
++use serde_json::{json, Value};
++use std::collections::HashMap;
++
++const TOLERANCE_M: f64 = 0.00001;
++const MAX_LEAVES: usize = 65_536;
++
++/// Exact f32 coefficients promoted before JSON serialization. Do not replace
++/// this with the body's stored (possibly previous-substep) world transform.
++#[derive(Clone, Copy, Deserialize)]
++pub(super) struct CapturedPose {
++    pub translation: [f64; 3],
++    pub rotation_xyzw: [f64; 4],
++}
++impl CapturedPose {
++    fn point(self, p: DVec3) -> DVec3 {
++        DQuat::from_array(self.rotation_xyzw) * p + DVec3::from_array(self.translation)
++    }
++    fn direction(self, p: DVec3) -> DVec3 {
++        DQuat::from_array(self.rotation_xyzw) * p
++    }
++    fn valid(self) -> bool {
++        DVec3::from_array(self.translation).is_finite()
++            && DQuat::from_array(self.rotation_xyzw).is_finite()
++            && (DQuat::from_array(self.rotation_xyzw).length_squared() - 1.).abs() < 0.0001
++    }
++}
++fn promoted(pose: &r::Pose) -> CapturedPose {
++    CapturedPose {
++        translation: pose.translation.to_array().map(f64::from),
++        rotation_xyzw: pose.rotation.to_array().map(f64::from),
++    }
++}
++#[derive(Clone)]
++struct Leaf {
++    path: Vec<u32>,
++    vertices: Vec<DVec3>,
++    faces: Vec<[usize; 3]>,
++    closed: bool,
++    // A registered heightfield represents the ground below its top triangles.
++    // Open triangle meshes do not acquire an invented solid side.
++    ground_up: Option<DVec3>,
++}
++fn supporting_faces(vertices: &[DVec3]) -> Result<Vec<[usize; 3]>, String> {
++    let mut faces = Vec::new();
++    for a in 0..vertices.len() {
++        for b in a + 1..vertices.len() {
++            for c in b + 1..vertices.len() {
++                let n = (vertices[b] - vertices[a]).cross(vertices[c] - vertices[a]);
++                if n.length_squared() < 1e-24 {
++                    continue;
++                }
++                let n = n.normalize();
++                let distances: Vec<_> = vertices.iter().map(|p| n.dot(*p - vertices[a])).collect();
++                let lo = distances.iter().copied().fold(f64::INFINITY, f64::min);
++                let hi = distances.iter().copied().fold(f64::NEG_INFINITY, f64::max);
++                if hi <= 1e-11 && lo < -1e-11 {
++                    faces.push([a, b, c]);
++                } else if lo >= -1e-11 && hi > 1e-11 {
++                    faces.push([a, c, b]);
++                }
++            }
++        }
++    }
++    if faces.len() < 4 {
++        return Err("degenerate or unproved closed polyhedron".into());
++    }
++    Ok(faces)
++}
++fn enumerate(
++    shape: &dyn Shape,
++    transforms: &[CapturedPose],
++    path: &mut Vec<u32>,
++    out: &mut Vec<Leaf>,
++) -> Result<(), String> {
++    if path.len() > 8 {
++        return Err("nested geometry exceeds explicit oracle bound".into());
++    }
++    if let Some(compound) = shape.as_compound() {
++        for (index, (pose, child)) in compound.shapes().iter().enumerate() {
++            path.push(index as u32);
++            let mut nested = transforms.to_vec();
++            nested.push(promoted(pose));
++            enumerate(child.as_ref(), &nested, path, out)?;
++            path.pop();
++        }
++        return Ok(());
++    }
++    let transform = |mut p: DVec3| {
++        for &pose in transforms.iter().rev() {
++            p = pose.point(p);
++        }
++        p
++    };
++    let direction = |mut p: DVec3| {
++        for &pose in transforms.iter().rev() {
++            p = pose.direction(p);
++        }
++        p
++    };
++    let mut push = |points: Vec<r::Vector>,
++                    closed: bool,
++                    ground: bool,
++                    child: Option<u32>|
++     -> Result<(), String> {
++        if out.len() >= MAX_LEAVES {
++            return Err("complete registered geometry exceeds oracle leaf bound".into());
++        }
++        if points.len() > 32 {
++            return Err("closed hull exceeds oracle vertex bound; no reduction applied".into());
++        }
++        let vertices: Vec<_> = points
++            .into_iter()
++            .map(|p| transform(DVec3::from_array(p.to_array().map(f64::from))))
++            .collect();
++        if vertices.iter().any(|p| !p.is_finite()) {
++            return Err("non-finite registered geometry".into());
++        }
++        let faces = if closed {
++            supporting_faces(&vertices)?
++        } else {
++            vec![[0, 1, 2]]
++        };
++        let mut leaf_path = path.clone();
++        if let Some(child) = child {
++            leaf_path.push(child);
++        }
++        out.push(Leaf {
++            path: leaf_path,
++            vertices,
++            faces,
++            closed,
++            ground_up: ground.then(|| direction(DVec3::Y)),
++        });
++        Ok(())
++    };
++    if let Some(hull) = shape.as_convex_polyhedron() {
++        push(hull.points().to_vec(), true, false, None)
++    } else if let Some(cuboid) = shape.as_cuboid() {
++        push(
++            (0..8)
++                .map(|i| {
++                    r::Vector::new(
++                        if i & 1 == 0 {
++                            -cuboid.half_extents.x
++                        } else {
++                            cuboid.half_extents.x
++                        },
++                        if i & 2 == 0 {
++                            -cuboid.half_extents.y
++                        } else {
++                            cuboid.half_extents.y
++                        },
++                        if i & 4 == 0 {
++                            -cuboid.half_extents.z
++                        } else {
++                            cuboid.half_extents.z
++                        },
++                    )
++                })
++                .collect(),
++            true,
++            false,
++            None,
++        )
++    } else if let Some(field) = shape.as_heightfield() {
++        for id in 0..field.nrows() * field.ncols() * 2 {
++            if let Some(triangle) = field.triangle_at_id(id as u32) {
++                push(triangle.vertices().to_vec(), false, true, Some(id as u32))?;
++            }
++        }
++        Ok(())
++    } else if let Some(mesh) = shape.as_trimesh() {
++        for id in 0..mesh.num_triangles() {
++            push(
++                mesh.triangle(id as u32).vertices().to_vec(),
++                false,
++                false,
++                Some(id as u32),
++            )?;
++        }
++        Ok(())
++    } else if let Some(triangle) = shape.as_triangle() {
++        push(triangle.vertices().to_vec(), false, false, None)
++    } else {
++        Err(format!(
++            "unsupported registered shape {:?}; no proxy substituted",
++            shape.shape_type()
++        ))
++    }
++}
++// Ericson's point/triangle regions in f64, independent of the engine dispatcher.
++fn triangle_distance(p: DVec3, a: DVec3, b: DVec3, c: DVec3) -> f64 {
++    let ab = b - a;
++    let ac = c - a;
++    let ap = p - a;
++    let d1 = ab.dot(ap);
++    let d2 = ac.dot(ap);
++    if d1 <= 0. && d2 <= 0. {
++        return ap.length();
++    }
++    let bp = p - b;
++    let d3 = ab.dot(bp);
++    let d4 = ac.dot(bp);
++    if d3 >= 0. && d4 <= d3 {
++        return bp.length();
++    }
++    let vc = d1 * d4 - d3 * d2;
++    if vc <= 0. && d1 >= 0. && d3 <= 0. {
++        return (p - (a + ab * (d1 / (d1 - d3)))).length();
++    }
++    let cp = p - c;
++    let d5 = ab.dot(cp);
++    let d6 = ac.dot(cp);
++    if d6 >= 0. && d5 <= d6 {
++        return cp.length();
++    }
++    let vb = d5 * d2 - d1 * d6;
++    if vb <= 0. && d2 >= 0. && d6 <= 0. {
++        return (p - (a + ac * (d2 / (d2 - d6)))).length();
++    }
++    let va = d3 * d6 - d5 * d4;
++    if va <= 0. && d4 - d3 >= 0. && d5 - d6 >= 0. {
++        return (p - (b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6))))).length();
++    }
++    (p - (a + ab * (vb / (va + vb + vc)) + ac * (vc / (va + vb + vc)))).length()
++}
++fn query(leaf: &Leaf, pose: CapturedPose, point: DVec3) -> (f64, bool) {
++    let vertices: Vec<_> = leaf.vertices.iter().map(|&p| pose.point(p)).collect();
++    let mut distance = f64::INFINITY;
++    let mut maximum_signed = f64::NEG_INFINITY;
++    let mut inside_ground = false;
++    for &[a, b, c] in &leaf.faces {
++        let (a, b, c) = (vertices[a], vertices[b], vertices[c]);
++        let cross = (b - a).cross(c - a);
++        if cross.length_squared() < 1e-24 {
++            continue;
++        }
++        let normal = cross.normalize();
++        distance = distance.min(triangle_distance(point, a, b, c));
++        maximum_signed = maximum_signed.max(normal.dot(point - a));
++        if let Some(up) = leaf.ground_up {
++            let up = pose.direction(up).normalize();
++            let normal = if normal.dot(up) >= 0. {
++                normal
++            } else {
++                -normal
++            };
++            let denominator = normal.dot(up);
++            if denominator > 1e-8 {
++                let signed = normal.dot(point - a);
++                let projected = point - up * (signed / denominator);
++                inside_ground |=
++                    signed < -TOLERANCE_M && triangle_distance(projected, a, b, c) < 1e-9;
++            }
++        }
++    }
++    (
++        distance,
++        (leaf.closed && maximum_signed < -TOLERANCE_M) || inside_ground,
++    )
++}
++
++/// Caches only registered geometry, never engine distances or current poses.
++/// The caller must use the same immutable scene as the observed solver rows.
++pub(super) struct Oracle<'a> {
++    world: &'a r::PhysicsWorld,
++    registered: HashMap<r::ColliderHandle, Result<Vec<Leaf>, String>>,
++}
++impl<'a> Oracle<'a> {
++    pub fn new(world: &'a r::PhysicsWorld) -> Self {
++        Self {
++            world,
++            registered: HashMap::new(),
++        }
++    }
++    fn side(
++        &mut self,
++        handle: r::ColliderHandle,
++        pose: CapturedPose,
++        anchor: DVec3,
++        outward: DVec3,
++    ) -> Value {
++        if !pose.valid()
++            || !anchor.is_finite()
++            || !outward.is_finite()
++            || outward.length_squared() < 1e-20
++        {
++            return json!({"certified":false,"reason":"missing or invalid captured geometry/normal"});
++        }
++        let leaves = self.registered.entry(handle).or_insert_with(|| {
++            let collider = self
++                .world
++                .colliders
++                .get(handle)
++                .ok_or("captured collider generation is not registered")?;
++            let mut leaves = Vec::new();
++            enumerate(collider.shape(), &[], &mut Vec::new(), &mut leaves)?;
++            Ok(leaves)
++        });
++        let leaves = match leaves {
++            Ok(leaves) => leaves,
++            Err(error) => return json!({"certified":false,"reason":error}),
++        };
++        if leaves.is_empty() {
++            return json!({"certified":false,"reason":"registered shape has no leaves"});
++        }
++        let probe = outward.normalize() * (4. * TOLERANCE_M);
++        let mut owners = Vec::new();
++        let mut nearest = f64::INFINITY;
++        let mut inside = false;
++        let mut outside_probe_clear = true;
++        let mut inward_probe_inside = false;
++        let mut closed_sides = true;
++        for leaf in leaves.iter() {
++            let (distance, interior) = query(leaf, pose, anchor);
++            nearest = nearest.min(distance);
++            inside |= interior;
++            if distance <= TOLERANCE_M {
++                owners.push(leaf.path.clone());
++            }
++            let (outside_distance, outside_inside) = query(leaf, pose, anchor + probe);
++            outside_probe_clear &= !outside_inside && outside_distance > TOLERANCE_M;
++            inward_probe_inside |= query(leaf, pose, anchor - probe).1;
++            closed_sides &= leaf.closed || leaf.ground_up.is_some();
++        }
++        // A shared internal face is not made exterior merely because it is on
++        // two leaf boundaries. Reject ownership ambiguity rather than inventing
++        // the child named by a cluster's first contributing manifold.
++        let unique = owners.len() == 1;
++        let exterior =
++            unique && !inside && outside_probe_clear && inward_probe_inside && closed_sides;
++        json!({"certified":exterior,"registered_leaf_count":leaves.len(),"geometry_complete":true,
++            "nearest_registered_leaf_surface_m":nearest,"owner_count":owners.len(),
++            "owner_paths":owners.iter().take(16).collect::<Vec<_>>(),"unique_leaf_witness":unique,
++            "inside_registered_solid":inside,"outward_probe_clear":outside_probe_clear,
++            "inward_probe_inside":inward_probe_inside,"solid_sides_known":closed_sides,
++            "ambiguous_or_internal_seam_unproved":!unique || inside || !outside_probe_clear,
++            "open_mesh_sidedness_unproved":!closed_sides,"tolerance_m":TOLERANCE_M,
++            "exterior_probe_distance_m":probe.length(),"heightfield_model":"registered top triangles with downward solid sides"})
++    }
++    /// `force_direction1` is the actual solver force on collider one. Its
++    /// outward surface normal points the opposite way; collider two reverses it.
++    pub fn inspect(
++        &mut self,
++        handles: [r::ColliderHandle; 2],
++        poses: [CapturedPose; 2],
++        anchors: [DVec3; 2],
++        force_direction1: DVec3,
++    ) -> Value {
++        let a = self.side(handles[0], poses[0], anchors[0], -force_direction1);
++        let b = self.side(handles[1], poses[1], anchors[1], force_direction1);
++        json!({"both_exterior_witnesses_certified":a["certified"]==true && b["certified"]==true,
++            "sides":[a,b],"witness_normal_gap_m":(anchors[0]-anchors[1]).dot(force_direction1.normalize_or_zero()),
++            "cluster_subshape_ids_used_as_ownership":false,"engine_distance_query_used":false,
++            "captured_current_collider_poses_used":true,"full_contact_equation_certified":false,
++            "geometric_pair_distance_or_penetration_proved":false})
++    }
++}
++
++#[test]
++fn registered_compound_ownership_does_not_guess_cluster_child_or_certify_internal_seam() {
++    let mut world = r::PhysicsWorld::new();
++    let shape = r::SharedShape::compound(vec![
++        (
++            r::Pose::translation(-1., 0., 0.),
++            r::SharedShape::cuboid(1., 1., 1.),
++        ),
++        (
++            r::Pose::translation(1., 0., 0.),
++            r::SharedShape::cuboid(1., 1., 1.),
++        ),
++    ]);
++    let (_, handle) = world.insert(r::RigidBodyBuilder::fixed(), r::ColliderBuilder::new(shape));
++    let pose = CapturedPose {
++        translation: [20., 3., 22.],
++        rotation_xyzw: [0., 0., 0., 1.],
++    };
++    let mut oracle = Oracle::new(&world);
++    let exterior = oracle.side(handle, pose, DVec3::new(22., 3., 22.), DVec3::X);
++    assert_eq!(exterior["owner_paths"], json!([[1]]));
++    assert_eq!(exterior["certified"], true);
++    let seam = oracle.side(handle, pose, DVec3::new(20., 3., 22.), DVec3::X);
++    assert_eq!(seam["owner_count"], 2);
++    assert_eq!(seam["certified"], false);
++    assert_eq!(seam["ambiguous_or_internal_seam_unproved"], true);
++    let outside = oracle.side(handle, pose, DVec3::new(22.001, 3., 22.), DVec3::X);
++    assert_eq!(outside["owner_count"], 0);
++    assert_eq!(outside["certified"], false);
++}
++#[test]
++fn registered_heightfield_surface_ownership_uses_captured_pose_and_actual_triangles() {
++    let mut world = r::PhysicsWorld::new();
++    let shape = r::SharedShape::heightfield(
++        r::Array2::new(2, 2, vec![0.; 4]),
++        r::Vector::new(2., 1., 2.),
++    );
++    let (_, handle) = world.insert(r::RigidBodyBuilder::fixed(), r::ColliderBuilder::new(shape));
++    let pose = CapturedPose {
++        translation: [20., 3., 22.],
++        rotation_xyzw: [0., 0., 0., 1.],
++    };
++    let mut oracle = Oracle::new(&world);
++    let surface = oracle.side(handle, pose, DVec3::new(20.2, 3., 22.5), DVec3::Y);
++    assert_eq!(surface["registered_leaf_count"], 2);
++    assert_eq!(surface["owner_count"], 1);
++    assert_eq!(surface["certified"], true);
++    let stale = oracle.side(handle, pose, DVec3::new(0.2, 0., 0.5), DVec3::Y);
++    assert_eq!(stale["certified"], false);
++    let below = oracle.side(handle, pose, DVec3::new(20.2, 2.999, 22.5), DVec3::Y);
++    assert_eq!(below["inside_registered_solid"], true);
++    assert_eq!(below["certified"], false);
++}
+diff --git a/vendor/rapier3d/src/dynamics/solver/contact_constraint/rigid_anchor_objectivity.rs b/vendor/rapier3d/src/dynamics/solver/contact_constraint/rigid_anchor_objectivity.rs
+new file mode 100644
+--- /dev/null
++++ b/vendor/rapier3d/src/dynamics/solver/contact_constraint/rigid_anchor_objectivity.rs
+@@ -0,0 +1,216 @@
++//! Objectivity controls for recycled Coulomb contact anchors.
++//!
++//! The source manifold keeps body-local contact witnesses from its last full
++//! narrow-phase update. These controls apply common rigid motion to that pair,
++//! then exercise the actual builder generation and biased/unbiased RHS updates.
++//! A common rotation cannot create physical contact slip. Genuine persistent
++//! tangential displacement must remain in the correction target.
++
++use super::*;
++use crate::dynamics::{MassProperties, RigidBodyBuilder};
++use crate::geometry::{ColliderSet, SolverContact};
++use crate::math::{Rotation, Vector};
++use parry::shape::PackedFeatureId;
++
++const RADIUS: Real = 0.025;
++const SUBSTEP: Real = 1. / 1920.;
++const VELOCITY_TOLERANCE: Real = 3.0e-4;
++
++struct Fixture {
++    builder: ContactWithCoulombFrictionBuilder,
++    constraint: ContactWithCoulombFriction<SimdReal>,
++    solver: SolverBodies,
++    params: IntegrationParameters,
++    actual_delta: Vector,
++}
++
++fn fixture(angle: Real, common_translation: Vector, persistent_slip: Vector) -> Fixture {
++    let rotation = Rotation::from_rotation_z(angle);
++    let old_com = [Vector::Y * RADIUS, -Vector::Y * RADIUS];
++    let anchors = [-old_com[0], -old_com[1]];
++    let mut bodies = RigidBodySet::new();
++    let mut solver = SolverBodies::default();
++    solver.resize(2);
++    for side in 0..2 {
++        let slip = if side == 0 {
++            persistent_slip
++        } else {
++            Vector::ZERO
++        };
++        let mut body = RigidBodyBuilder::dynamic()
++            .translation(rotation * old_com[side] + common_translation + slip)
++            .rotation(Vector::Z * angle)
++            .additional_mass_properties(MassProperties::new(Vector::ZERO, 1., Vector::ONE))
++            .build();
++        body.recompute_mass_properties_from_colliders(&ColliderSet::new());
++        let handle = bodies.insert(body);
++        // Insertion resets internal solver references.
++        bodies[handle].ids.active_set_id = side as u32;
++        solver.copy_from(side, &bodies[handle]);
++    }
++
++    let mut manifold = ContactManifold::new();
++    manifold.data.normal = Vector::Y;
++    manifold.data.friction = 0.7;
++    manifold.data.restitution = 0.;
++    manifold.data.relative_dominance = 0;
++    manifold.data.solver_body_ids = [0, 1];
++    let mut point = parry::query::TrackedContact::<crate::geometry::ContactData>::new(
++        anchors[0],
++        anchors[1],
++        PackedFeatureId::face(0),
++        PackedFeatureId::face(0),
++        0.,
++    );
++    // Exactly the world-space arms frozen at the original coincident witness.
++    point.data.solver_dp1 = anchors[0];
++    point.data.solver_dp2 = anchors[1];
++    point.data.impulse = 1.;
++    point.data.warmstart_impulse = 1.;
++    point.data.warmstart_tangent_world = Vector::new(0.1, 0., -0.05);
++    manifold.points.push(point);
++    manifold.data.solver_contacts.push(SolverContact {
++        anchor1: anchors[0],
++        anchor2: anchors[1],
++        dist: 0.,
++        tangent_velocity: Vector::ZERO,
++        contact_id: [0],
++        padding: [0.],
++    });
++    let actual_points = core::array::from_fn::<_, 2, _>(|side| {
++        solver.poses[side].rotation * anchors[side] + solver.poses[side].translation
++    });
++    let actual_delta = actual_points[0] - actual_points[1];
++    assert!(
++        (actual_delta - persistent_slip).length() < 1.0e-7,
++        "independent material-witness construction changed slip: {actual_delta:?}"
++    );
++    // The common rotation preserves relative pose; it is inside the actual
++    // recycling policy's additional absolute-rotation bound, cos(theta) > .98.
++    assert!(angle.cos() > 0.98);
++
++    let mut builder = unsafe { core::mem::zeroed() };
++    let mut constraint = unsafe { core::mem::zeroed() };
++    let ids = core::array::from_fn(|lane| {
++        if lane == 0 {
++            ContactRef {
++                edge: 0,
++                manifold: 0,
++            }
++        } else {
++            ContactRef::PADDING
++        }
++    });
++    ContactWithCoulombFrictionBuilder::generate(
++        ids,
++        [&manifold; SIMD_WIDTH],
++        &bodies,
++        &solver,
++        &mut builder,
++        &mut constraint,
++    );
++    let params = IntegrationParameters {
++        dt: SUBSTEP,
++        ..IntegrationParameters::default()
++    };
++    Fixture {
++        builder,
++        constraint,
++        solver,
++        params,
++        actual_delta,
++    }
++}
++
++fn scalar(vector: <SimdReal as ScalarType>::Vector) -> Vector {
++    Vector::new(
++        vector.x.extract(0),
++        vector.y.extract(0),
++        vector.z.extract(0),
++    )
++}
++
++fn tangent_rhs_world(constraint: &ContactWithCoulombFriction<SimdReal>) -> Vector {
++    let normal = scalar(constraint.dir1);
++    let tangent = scalar(constraint.tangent1);
++    let bitangent = normal.cross(tangent);
++    tangent * constraint.tangent_part[0].rhs[0].extract(0)
++        + bitangent * constraint.tangent_part[0].rhs[1].extract(0)
++}
++
++fn expected_rhs(fixture: &Fixture) -> Vector {
++    let normal = scalar(fixture.constraint.dir1);
++    (fixture.actual_delta - normal * fixture.actual_delta.dot(normal)) / fixture.params.dt
++}
++
++fn update_biased(fixture: &mut Fixture) {
++    fixture.builder.update(
++        &fixture.params,
++        0.,
++        &fixture.solver,
++        &MultibodyJointSet::new(),
++        &mut fixture.constraint,
++    );
++}
++
++#[test]
++fn common_rigid_rotation_does_not_invent_tangential_anchor_velocity() {
++    for angle in [0., 0.025, 0.1, -0.1] {
++        for translation in [Vector::ZERO, Vector::new(0.125, -0.25, 0.5)] {
++            let mut f = fixture(angle, translation, Vector::ZERO);
++            update_biased(&mut f);
++            let actual = tangent_rhs_world(&f.constraint);
++            let expected = expected_rhs(&f);
++            assert!(
++                (actual - expected).length() <= VELOCITY_TOLERANCE,
++                "common rigid angle={angle}, translation={translation:?} invented contact \
++                 velocity: actual={actual:?}, material-witness target={expected:?}, \
++                 discrepancy={} m/s",
++                (actual - expected).length()
++            );
++            assert!(f.constraint.normal_part[0].rhs.extract(0).abs() <= VELOCITY_TOLERANCE);
++        }
++    }
++}
++
++#[test]
++fn actual_persistent_tangential_slip_is_preserved() {
++    let mut f = fixture(0., Vector::ZERO, Vector::new(0.001, 0., -0.0007));
++    update_biased(&mut f);
++    let actual = tangent_rhs_world(&f.constraint);
++    let expected = expected_rhs(&f);
++    assert!(expected.length() > 2.);
++    assert!(
++        (actual - expected).length() <= VELOCITY_TOLERANCE,
++        "persistent material slip must not be erased: {actual:?} versus {expected:?}"
++    );
++}
++
++#[test]
++fn common_rotation_preserves_real_tangential_slip_without_adding_false_slip() {
++    for angle in [0.025, 0.1, -0.1] {
++        let mut f = fixture(angle, Vector::ZERO, Vector::new(0.001, 0., -0.0007));
++        update_biased(&mut f);
++        let actual = tangent_rhs_world(&f.constraint);
++        let expected = expected_rhs(&f);
++        assert!(expected.length() > 2.);
++        assert!(
++            (actual - expected).length() <= VELOCITY_TOLERANCE,
++            "angle={angle}: true persistent slip target={expected:?}, \
++             builder target={actual:?}"
++        );
++    }
++}
++
++#[test]
++fn unbiased_update_removes_position_target_and_preserves_source_impulses() {
++    let mut f = fixture(0.1, Vector::ZERO, Vector::new(0.001, 0., -0.0007));
++    update_biased(&mut f);
++    let normal_impulse = f.constraint.normal_part[0].impulse;
++    let tangent_impulse = f.constraint.tangent_part[0].impulse;
++    f.builder
++        .update_rhs_wo_bias(&f.params, 0., &f.solver, &mut f.constraint);
++    assert_eq!(tangent_rhs_world(&f.constraint), Vector::ZERO);
++    assert_eq!(f.constraint.normal_part[0].impulse, normal_impulse);
++    assert_eq!(f.constraint.tangent_part[0].impulse, tangent_impulse);
++}
+diff --git a/vendor/rapier3d/src/dynamics/solver/contact_work_audit/rigid_work.rs b/vendor/rapier3d/src/dynamics/solver/contact_work_audit/rigid_work.rs
+new file mode 100644
+--- /dev/null
++++ b/vendor/rapier3d/src/dynamics/solver/contact_work_audit/rigid_work.rs
+@@ -0,0 +1,924 @@
++//! Fixed-pose rigid Coulomb block work. Impulse rows are paired with the
++//! common block midpoint, including normal/tangent cross terms; these are
++//! net-block partitions, never sequential per-row energy claims.
++use super::*;
++use crate::dynamics::IntegrationParameters;
++use crate::dynamics::solver::contact_constraint::{
++    ContactWithCoulombFriction, ContactWithCoulombFrictionBuilder,
++};
++use crate::dynamics::solver::manifold_store::ManifoldStore;
++use crate::geometry::{ColliderHandle, ColliderSet};
++use crate::math::{Pose, Real, SIMD_WIDTH, SimdReal};
++use crate::utils::{CrossProduct, DotProduct};
++use simba::simd::SimdValue;
++use std::collections::HashMap;
++
++#[derive(Clone, Copy)]
++pub(super) struct ColliderSnapshot {
++    parent: Option<RigidBodyHandle>,
++    local: Option<Pose>,
++    world: Pose,
++}
++pub(super) fn capture_colliders(
++    colliders: &ColliderSet,
++) -> HashMap<ColliderHandle, ColliderSnapshot> {
++    colliders
++        .iter()
++        .map(|(h, c)| {
++            (h, ColliderSnapshot {
++                parent: c.parent(),
++                local: c.position_wrt_parent().copied(),
++                world: *c.position(),
++            })
++        })
++        .collect()
++}
++
++/// The coefficients are promoted from the actual f32 solver/composed pose,
++/// without normalizing or silently replacing its quaternion.
++#[derive(Clone, Copy, Debug, serde::Serialize)]
++pub struct PoseWork {
++    translation: [f64; 3],
++    rotation_xyzw: [f64; 4],
++}
++fn pose_work(p: Pose) -> PoseWork {
++    PoseWork {
++        translation: p.translation.to_array().map(f64::from),
++        rotation_xyzw: p.rotation.to_array().map(f64::from),
++    }
++}
++fn vector(v: Vector) -> [f64; 3] {
++    v.to_array().map(f64::from)
++}
++fn lane_vector(v: <SimdReal as crate::utils::ScalarType>::Vector, lane: usize) -> Vector {
++    Vector::from_array(std::array::from_fn(|i| v[i].extract(lane)))
++}
++fn six(v: crate::dynamics::solver::SolverVel<Real>) -> VectorN<f64> {
++    VectorN::from_iterator(
++        6,
++        v.linear
++            .to_array()
++            .into_iter()
++            .chain(v.angular.to_array())
++            .map(f64::from),
++    )
++}
++fn six_array(v: &VectorN<f64>) -> [f64; 6] {
++    std::array::from_fn(|i| v[i])
++}
++fn wrench(direction: Vector, torque: Vector) -> VectorN<f64> {
++    VectorN::from_iterator(
++        6,
++        direction
++            .to_array()
++            .into_iter()
++            .chain(torque.to_array())
++            .map(f64::from),
++    )
++}
++fn kinetic_change(before: &VectorN<f64>, after: &VectorN<f64>, mass: &DMatrix<f64>) -> f64 {
++    0.5 * (after - before).dot(&(mass * (after + before)))
++}
++#[derive(Debug, serde::Serialize)]
++struct RigidSideWork {
++    body_handle: Option<(u32, u32)>,
++    solver_body_id: u32,
++    dynamic: bool,
++    sleeping: bool,
++    /// Sentinel poses are the identity actually used by the contact solver.
++    solver_center_of_mass_pose: PoseWork,
++    physical_center_of_mass_pose: Option<PoseWork>,
++    physical_pose_source: &'static str,
++    body_origin_pose: Option<PoseWork>,
++    local_center_of_mass_m: [f64; 3],
++    mass_kg: f64,
++    local_principal_inertia_kg_m2: [f64; 3],
++    local_principal_frame_xyzw: [f64; 4],
++    collider_parent_handle: Option<(u32, u32)>,
++    collider_local_pose: Option<PoseWork>,
++    captured_collider_world_pose: Option<PoseWork>,
++    collider_pose_source: &'static str,
++    before_velocity: [f64; 6],
++    after_velocity: [f64; 6],
++    stored_response_delta_velocity: [f64; 6],
++    actual_delta_velocity: [f64; 6],
++    physical_kinetic_change_j: f64,
++}
++#[derive(Debug, serde::Serialize)]
++struct RigidPointWork {
++    contact_id: u8,
++    /// Original localized manifold witnesses at the current solver poses.
++    world_anchors_m: [[f64; 3]; 2],
++    /// Substep tracking uses builder anchors, with conveyor movement on side 1.
++    tracking_world_anchors_m: [[f64; 3]; 2],
++    tracking_local_anchors_m: [[f64; 3]; 2],
++    tracking_base_distance_m: f64,
++    restitution_seed_m_s: f64,
++    tracking_distance_m: f64,
++    tangent_velocity_m_s: [f64; 3],
++    tangent_tracking_offset_m: [f64; 3],
++    frozen_world_arms_m: [[f64; 3]; 2],
++    force_direction1: [f64; 3],
++    tangent_directions1: [[f64; 3]; 2],
++    normal_torque_directions: [[f64; 3]; 2],
++    tangent_torque_directions: [[[f64; 3]; 2]; 2],
++    normal_inverse_torque_directions: [[f64; 3]; 2],
++    tangent_inverse_torque_directions: [[[f64; 3]; 2]; 2],
++    inverse_mass_diagonal: [[f64; 3]; 2],
++    normal_impulse_before_ns: f64,
++    normal_impulse_after_ns: f64,
++    tangent_impulse_before_ns: [f64; 2],
++    tangent_impulse_after_ns: [f64; 2],
++    normal_delta_ns: f64,
++    tangent_delta_ns: [f64; 2],
++    normal_midpoint_work_j: f64,
++    tangent_midpoint_work_j: f64,
++    prescribed_midpoint_work_j: f64,
++    normal_bias_pairing_j: f64,
++    tangent_bias_pairing_j: f64,
++    normal_rhs_m_s: Option<f64>,
++    normal_stored_rhs_without_bias_m_s: f64,
++    tangent_rhs_m_s: Option<[f64; 2]>,
++    tangent_rhs_without_bias_m_s: [f64; 2],
++    normal_inverse_effective_mass: f64,
++    normal_cfm_factor: f64,
++    tangent_effective_mass_entries: [f64; 3],
++    maximum_dissipation: bool,
++}
++/// One real (non-padding) lane/manifold of a fixed-pose Coulomb operation.
++#[derive(Debug, serde::Serialize)]
++pub struct RigidContactWork {
++    record_kind: &'static str,
++    manifold: [u32; 2],
++    chunk: usize,
++    lane: usize,
++    clustered: bool,
++    advisory_subshapes: [u32; 2],
++    collider_handles: [(u32, u32); 2],
++    collider_world_poses: [Option<PoseWork>; 2],
++    relative_dominance: i16,
++    stage: &'static str,
++    unbiased: bool,
++    solve_friction: bool,
++    solved_time_s: f32,
++    inverse_substep_dt_s: f64,
++    normal_bias_gain_s_inv: f64,
++    max_corrective_velocity_m_s: f64,
++    friction_coefficient: f64,
++    constraint_cfm_factor: f64,
++    physical_kinetic_change_j: f64,
++    normal_midpoint_work_j: f64,
++    tangent_midpoint_work_j: f64,
++    prescribed_midpoint_work_j: f64,
++    physical_minus_impulse_work_j: f64,
++    max_impulse_velocity_residual: f64,
++    sides: Vec<RigidSideWork>,
++    points: Vec<RigidPointWork>,
++}
++struct RigidSide {
++    data: RigidSideWork,
++    mass: DMatrix<f64>,
++    velocity: VectorN<f64>,
++}
++struct Lane {
++    row: RigidContactWork,
++    sides: [RigidSide; 2],
++}
++pub(crate) struct Snapshot {
++    old: ContactWithCoulombFriction<SimdReal>,
++    lanes: Vec<Lane>,
++}
++
++fn physical_pose(
++    handle: RigidBodyHandle,
++    island: &[RigidBodyHandle],
++    solver: &SolverBodies,
++    bodies: &RigidBodySet,
++    mb: &MultibodyJointSet,
++) -> (Pose, &'static str) {
++    let body = &bodies[handle];
++    if let Some(link) = mb.rigid_body_link(handle) {
++        let link = mb[link.multibody].link(link.id).unwrap();
++        return (
++            link.local_to_world
++                .prepend_translation(body.local_center_of_mass()),
++            "current_multibody_link",
++        );
++    }
++    let id = body.effective_active_set_offset() as usize;
++    if island.get(id) == Some(&handle) {
++        assert_eq!(bodies[handle].ids.active_set_id as usize, id);
++        return (solver.poses[id].pose(), "current_solver_com");
++    }
++    (
++        body.position()
++            .prepend_translation(body.local_center_of_mass()),
++        "body_pose_outside_island",
++    )
++}
++fn side(
++    handle: Option<RigidBodyHandle>,
++    collider: ColliderHandle,
++    id: u32,
++    island: &[RigidBodyHandle],
++    solver: &SolverBodies,
++    bodies: &RigidBodySet,
++    mb: &MultibodyJointSet,
++) -> (RigidSide, Option<PoseWork>) {
++    if id != u32::MAX {
++        let handle = handle.expect("rigid solver slot requires actual body handle");
++        assert_eq!(
++            island.get(id as usize),
++            Some(&handle),
++            "rigid audit solver/body mapping"
++        );
++        assert_eq!(bodies[handle].ids.active_set_id, id);
++        assert!(
++            mb.rigid_body_link(handle).is_none(),
++            "Coulomb lane cannot use multibody solver slots"
++        );
++        assert!((id as usize) < solver.len());
++    }
++    let solver_pose = if id == u32::MAX {
++        Pose::IDENTITY
++    } else {
++        solver.poses[id as usize].pose()
++    };
++    let body = handle.map(|h| &bodies[h]);
++    let (com, source) = handle
++        .map(|h| physical_pose(h, island, solver, bodies, mb))
++        .map_or((None, "no_body"), |(p, s)| (Some(p), s));
++    let local_com = body.map_or(Vector::ZERO, |b| b.local_center_of_mass());
++    let origin = com.map(|p| Pose::from_parts(p.translation - p.rotation * local_com, p.rotation));
++    let captured = COLLIDERS.with(|c| {
++        c.borrow()
++            .as_ref()
++            .and_then(|all| all.get(&collider))
++            .copied()
++    });
++    if let Some(c) = captured {
++        assert_eq!(
++            c.parent, handle,
++            "collider snapshot parent differs from manifold"
++        );
++    }
++    let (collider_world, collider_source) = match captured {
++        Some(c) => match c.parent {
++            Some(_) => (
++                Some(origin.expect("parented collider body pose") * c.local.unwrap()),
++                "current_solver_com_body_origin_local_composition",
++            ),
++            None => (Some(c.world), "captured_standalone_world"),
++        },
++        None => (None, "not_captured"),
++    };
++    let velocity = six(solver.get_vel(id));
++    let dynamic = body.is_some_and(|b| b.is_dynamic());
++    let mass = if dynamic && id != u32::MAX {
++        spatial_mass(body.unwrap(), solver_pose.rotation)
++    } else {
++        DMatrix::zeros(6, 6)
++    };
++    let local = body.map(|b| &b.mass_properties().local_mprops);
++    let data = RigidSideWork {
++        body_handle: handle.map(|h| h.into_raw_parts()),
++        solver_body_id: id,
++        dynamic,
++        sleeping: body.is_some_and(|b| b.is_sleeping()),
++        solver_center_of_mass_pose: pose_work(solver_pose),
++        physical_center_of_mass_pose: com.map(pose_work),
++        physical_pose_source: source,
++        body_origin_pose: origin.map(pose_work),
++        local_center_of_mass_m: vector(local_com),
++        mass_kg: body.map_or(0., |b| f64::from(b.mass())),
++        local_principal_inertia_kg_m2: local
++            .map_or([0.; 3], |p| p.principal_inertia().to_array().map(f64::from)),
++        local_principal_frame_xyzw: local.map_or([0., 0., 0., 1.], |p| {
++            p.principal_inertia_local_frame.to_array().map(f64::from)
++        }),
++        collider_parent_handle: captured.and_then(|c| c.parent).map(|h| h.into_raw_parts()),
++        collider_local_pose: captured.and_then(|c| c.local).map(pose_work),
++        captured_collider_world_pose: captured.map(|c| pose_work(c.world)),
++        collider_pose_source: collider_source,
++        before_velocity: six_array(&velocity),
++        after_velocity: [0.; 6],
++        stored_response_delta_velocity: [0.; 6],
++        actual_delta_velocity: [0.; 6],
++        physical_kinetic_change_j: 0.,
++    };
++    (
++        RigidSide {
++            data,
++            mass,
++            velocity,
++        },
++        collider_world.map(pose_work),
++    )
++}
++
++#[allow(clippy::too_many_arguments)]
++pub(crate) fn before(
++    c: &ContactWithCoulombFriction<SimdReal>,
++    builder: &ContactWithCoulombFrictionBuilder,
++    solver: &SolverBodies,
++    island: &[RigidBodyHandle],
++    bodies: &RigidBodySet,
++    mb: &MultibodyJointSet,
++    store: &ManifoldStore<'_>,
++    params: &IntegrationParameters,
++    stage: &'static str,
++    unbiased: bool,
++    time: f32,
++    chunk: usize,
++    solve_friction: bool,
++) -> Option<Snapshot> {
++    if !enabled() {
++        return None;
++    }
++    let mut lanes = Vec::new();
++    let mut writable_lanes = HashMap::new();
++    let infos = builder.audit_infos();
++    let poses = [
++        solver.gather_transforms(c.solver_vel1),
++        solver.gather_transforms(c.solver_vel2),
++    ];
++    for lane in 0..SIMD_WIDTH {
++        let id = c.manifold_id[lane];
++        if id.is_padding() {
++            continue;
++        }
++        let manifold = store.get(id);
++        let (colliders, clustered) = store.audit_pair_metadata(id);
++        let handles = [manifold.data.rigid_body1, manifold.data.rigid_body2];
++        let ids = [c.solver_vel1[lane], c.solver_vel2[lane]];
++        let [(first, world1), (second, world2)] = std::array::from_fn(|i| {
++            side(handles[i], colliders[i], ids[i], island, solver, bodies, mb)
++        });
++        // Same-color lanes may share prescribed kinematic/world sides, but
++        // writable dynamic slots must be disjoint for lane-local energy deltas.
++        for (side_index, observed) in [&first, &second].into_iter().enumerate() {
++            if !observed.data.dynamic || ids[side_index] == u32::MAX {
++                continue;
++            }
++            let im = lane_vector(if side_index == 0 { c.im1 } else { c.im2 }, lane);
++            let has_response = im.length_squared() != 0.
++                || (0..c.num_contacts as usize).any(|p| {
++                    if c.manifold_contact_id[p][lane] == u8::MAX {
++                        return false;
++                    }
++                    let np = c.normal_part[p];
++                    let tp = c.tangent_part[p];
++                    let normal = if side_index == 0 {
++                        np.ii_torque_dir1
++                    } else {
++                        np.ii_torque_dir2
++                    };
++                    let tangent = if side_index == 0 {
++                        tp.ii_torque_dir1
++                    } else {
++                        tp.ii_torque_dir2
++                    };
++                    lane_vector(normal, lane).length_squared() != 0.
++                        || tangent
++                            .into_iter()
++                            .any(|v| lane_vector(v, lane).length_squared() != 0.)
++                });
++            if has_response {
++                let previous = writable_lanes.insert(ids[side_index], lane);
++                assert!(
++                    previous.is_none_or(|old| old == lane),
++                    "rigid audit writable body shared between SIMD lanes"
++                );
++            }
++        }
++        let mut points = Vec::new();
++        let normal = lane_vector(c.dir1, lane);
++        let tangent1 = lane_vector(c.tangent1, lane);
++        let tangents = [tangent1, lane_vector(c.dir1.gcross(c.tangent1), lane)];
++        for point in 0..c.num_contacts as usize {
++            let cid = c.manifold_contact_id[point][lane];
++            if cid == u8::MAX {
++                continue;
++            }
++            let sc = manifold
++                .data
++                .solver_contacts
++                .iter()
++                .find(|sc| sc.contact_indices()[0] == u32::from(cid))
++                .expect("active Coulomb point has original manifold solver contact");
++            let world_anchor = [sc.anchor1, sc.anchor2];
++            let world_anchor: [_; 2] =
++                std::array::from_fn(|i| solver.get_pose(ids[i]).transform_point(world_anchor[i]));
++            let info = infos[point];
++            let local = [
++                lane_vector(info.local_p1, lane),
++                lane_vector(info.local_p2, lane),
++            ];
++            let tangent_vel = lane_vector(info.tangent_vel, lane);
++            let offset_wide = info.tangent_vel * SimdReal::splat(time);
++            let offset = lane_vector(offset_wide, lane);
++            let tracked_wide = [
++                poses[0].transform_point(info.local_p1) + offset_wide,
++                poses[1].transform_point(info.local_p2),
++            ];
++            let tracked = tracked_wide.map(|p| lane_vector(p, lane));
++            let tracking_distance = info.dist + (tracked_wide[0] - tracked_wide[1]).gdot(c.dir1);
++            let np = c.normal_part[point];
++            let tp = c.tangent_part[point];
++            points.push(RigidPointWork {
++                contact_id: cid,
++                world_anchors_m: world_anchor.map(vector),
++                tracking_world_anchors_m: tracked.map(vector),
++                tracking_local_anchors_m: local.map(vector),
++                tracking_base_distance_m: f64::from(info.dist.extract(lane)),
++                restitution_seed_m_s: f64::from(info.restitution_seed.extract(lane)),
++                tracking_distance_m: f64::from(tracking_distance.extract(lane)),
++                tangent_velocity_m_s: vector(tangent_vel),
++                tangent_tracking_offset_m: vector(offset),
++                frozen_world_arms_m: [
++                    manifold.points[cid as usize].data.solver_dp1,
++                    manifold.points[cid as usize].data.solver_dp2,
++                ]
++                .map(vector),
++                force_direction1: vector(normal),
++                tangent_directions1: tangents.map(vector),
++                normal_torque_directions: [
++                    lane_vector(np.torque_dir1, lane),
++                    lane_vector(np.torque_dir2, lane),
++                ]
++                .map(vector),
++                tangent_torque_directions: [
++                    [
++                        lane_vector(tp.torque_dir1[0], lane),
++                        lane_vector(tp.torque_dir1[1], lane),
++                    ]
++                    .map(vector),
++                    [
++                        lane_vector(tp.torque_dir2[0], lane),
++                        lane_vector(tp.torque_dir2[1], lane),
++                    ]
++                    .map(vector),
++                ],
++                normal_inverse_torque_directions: [
++                    lane_vector(np.ii_torque_dir1, lane),
++                    lane_vector(np.ii_torque_dir2, lane),
++                ]
++                .map(vector),
++                tangent_inverse_torque_directions: [
++                    [
++                        lane_vector(tp.ii_torque_dir1[0], lane),
++                        lane_vector(tp.ii_torque_dir1[1], lane),
++                    ]
++                    .map(vector),
++                    [
++                        lane_vector(tp.ii_torque_dir2[0], lane),
++                        lane_vector(tp.ii_torque_dir2[1], lane),
++                    ]
++                    .map(vector),
++                ],
++                inverse_mass_diagonal: [lane_vector(c.im1, lane), lane_vector(c.im2, lane)]
++                    .map(vector),
++                normal_impulse_before_ns: f64::from(np.impulse.extract(lane)),
++                normal_impulse_after_ns: 0.,
++                tangent_impulse_before_ns: std::array::from_fn(|i| {
++                    f64::from(tp.impulse[i].extract(lane))
++                }),
++                tangent_impulse_after_ns: [0.; 2],
++                normal_delta_ns: 0.,
++                tangent_delta_ns: [0.; 2],
++                normal_midpoint_work_j: 0.,
++                tangent_midpoint_work_j: 0.,
++                prescribed_midpoint_work_j: 0.,
++                normal_bias_pairing_j: 0.,
++                tangent_bias_pairing_j: 0.,
++                normal_rhs_m_s: (stage != "warmstart").then(|| {
++                    f64::from(
++                        if stage == "projection" {
++                            np.rhs_wo_bias
++                        } else {
++                            np.rhs
++                        }
++                        .extract(lane),
++                    )
++                }),
++                normal_stored_rhs_without_bias_m_s: f64::from(np.rhs_wo_bias.extract(lane)),
++                tangent_rhs_m_s: (stage != "warmstart").then(|| {
++                    std::array::from_fn(|i| {
++                        f64::from(
++                            if stage == "projection" {
++                                tp.rhs_wo_bias[i]
++                            } else {
++                                tp.rhs[i]
++                            }
++                            .extract(lane),
++                        )
++                    })
++                }),
++                tangent_rhs_without_bias_m_s: std::array::from_fn(|i| {
++                    f64::from(tp.rhs_wo_bias[i].extract(lane))
++                }),
++                normal_inverse_effective_mass: f64::from(np.r.extract(lane)),
++                normal_cfm_factor: if stage == "projection" {
++                    1.
++                } else {
++                    f64::from(np.cfm_factor.extract(lane))
++                },
++                tangent_effective_mass_entries: std::array::from_fn(|i| {
++                    f64::from(tp.r[i].extract(lane))
++                }),
++                maximum_dissipation: tp.maximum_dissipation,
++            });
++        }
++        let row = RigidContactWork {
++            record_kind: "rigid_coulomb",
++            manifold: [id.edge, id.manifold],
++            chunk,
++            lane,
++            clustered,
++            advisory_subshapes: [manifold.subshape1, manifold.subshape2],
++            collider_handles: colliders.map(|h| h.into_raw_parts()),
++            collider_world_poses: [world1, world2],
++            relative_dominance: i16::from(manifold.data.relative_dominance),
++            stage,
++            unbiased,
++            solve_friction,
++            solved_time_s: time,
++            inverse_substep_dt_s: f64::from(params.inv_dt()),
++            normal_bias_gain_s_inv: f64::from(if ids.contains(&u32::MAX) {
++                params.static_contact_softness.erp_inv_dt(params.dt)
++            } else {
++                params.contact_softness.erp_inv_dt(params.dt)
++            }),
++            max_corrective_velocity_m_s: f64::from(params.max_corrective_velocity()),
++            friction_coefficient: f64::from(c.limit.extract(lane)),
++            constraint_cfm_factor: if stage == "projection" {
++                1.
++            } else {
++                f64::from(c.cfm_factor.extract(lane))
++            },
++            physical_kinetic_change_j: 0.,
++            normal_midpoint_work_j: 0.,
++            tangent_midpoint_work_j: 0.,
++            prescribed_midpoint_work_j: 0.,
++            physical_minus_impulse_work_j: 0.,
++            max_impulse_velocity_residual: 0.,
++            sides: Vec::new(),
++            points,
++        };
++        lanes.push(Lane {
++            row,
++            sides: [first, second],
++        });
++    }
++    Some(Snapshot { old: *c, lanes })
++}
++
++pub(crate) fn after(
++    snapshot: Option<Snapshot>,
++    c: &ContactWithCoulombFriction<SimdReal>,
++    solver: &SolverBodies,
++) {
++    let Some(s) = snapshot else {
++        return;
++    };
++    for mut lane in s.lanes {
++        let k = lane.row.lane;
++        let end: [_; 2] =
++            std::array::from_fn(|i| six(solver.get_vel(lane.sides[i].data.solver_body_id)));
++        let mid: [_; 2] = std::array::from_fn(|i| (&lane.sides[i].velocity + &end[i]) * 0.5);
++        let mut response = [VectorN::zeros(6), VectorN::zeros(6)];
++        let normal = lane_vector(c.dir1, k);
++        let tangent1 = lane_vector(c.tangent1, k);
++        let tangents = [tangent1, lane_vector(c.dir1.gcross(c.tangent1), k)];
++        for p in &mut lane.row.points {
++            let point = (0..c.num_contacts as usize)
++                .find(|i| c.manifold_contact_id[*i][k] == p.contact_id)
++                .unwrap();
++            let np = &c.normal_part[point];
++            let tp = &c.tangent_part[point];
++            p.normal_impulse_after_ns = f64::from(np.impulse.extract(k));
++            p.tangent_impulse_after_ns =
++                std::array::from_fn(|i| f64::from(tp.impulse[i].extract(k)));
++            p.normal_delta_ns = if lane.row.stage == "warmstart" {
++                p.normal_impulse_after_ns
++            } else {
++                p.normal_impulse_after_ns - f64::from(s.old.normal_part[point].impulse.extract(k))
++            };
++            p.tangent_delta_ns = std::array::from_fn(|i| {
++                if lane.row.stage == "warmstart" {
++                    p.tangent_impulse_after_ns[i]
++                } else {
++                    p.tangent_impulse_after_ns[i]
++                        - f64::from(s.old.tangent_part[point].impulse[i].extract(k))
++                }
++            });
++            let deltas = [
++                p.normal_delta_ns,
++                p.tangent_delta_ns[0],
++                p.tangent_delta_ns[1],
++            ];
++            for (row, &delta) in deltas.iter().enumerate() {
++                let direction = if row == 0 { normal } else { tangents[row - 1] };
++                for i in 0..2 {
++                    if lane.sides[i].data.solver_body_id == u32::MAX {
++                        continue;
++                    }
++                    let (force, torque, inverse_torque, im) = if i == 0 {
++                        (
++                            direction,
++                            if row == 0 {
++                                lane_vector(np.torque_dir1, k)
++                            } else {
++                                lane_vector(tp.torque_dir1[row - 1], k)
++                            },
++                            if row == 0 {
++                                lane_vector(np.ii_torque_dir1, k)
++                            } else {
++                                lane_vector(tp.ii_torque_dir1[row - 1], k)
++                            },
++                            lane_vector(c.im1, k),
++                        )
++                    } else {
++                        (
++                            -direction,
++                            if row == 0 {
++                                lane_vector(np.torque_dir2, k)
++                            } else {
++                                lane_vector(tp.torque_dir2[row - 1], k)
++                            },
++                            if row == 0 {
++                                lane_vector(np.ii_torque_dir2, k)
++                            } else {
++                                lane_vector(tp.ii_torque_dir2[row - 1], k)
++                            },
++                            lane_vector(c.im2, k),
++                        )
++                    };
++                    let work = delta * wrench(force, torque).dot(&mid[i]);
++                    response[i] += wrench(im * force, inverse_torque) * delta;
++                    if lane.sides[i].data.dynamic {
++                        if row == 0 {
++                            p.normal_midpoint_work_j += work;
++                        } else {
++                            p.tangent_midpoint_work_j += work;
++                        }
++                    } else {
++                        p.prescribed_midpoint_work_j += work;
++                    }
++                }
++            }
++            if lane.row.stage == "solve" && !lane.row.unbiased {
++                p.normal_bias_pairing_j =
++                    -p.normal_delta_ns * f64::from(np.rhs.extract(k) - np.rhs_wo_bias.extract(k));
++                p.tangent_bias_pairing_j = -(0..2)
++                    .map(|i| {
++                        p.tangent_delta_ns[i]
++                            * f64::from(tp.rhs[i].extract(k) - tp.rhs_wo_bias[i].extract(k))
++                    })
++                    .sum::<f64>();
++            }
++            lane.row.normal_midpoint_work_j += p.normal_midpoint_work_j;
++            lane.row.tangent_midpoint_work_j += p.tangent_midpoint_work_j;
++            lane.row.prescribed_midpoint_work_j += p.prescribed_midpoint_work_j;
++        }
++        let same = lane.sides[0].data.solver_body_id != u32::MAX
++            && lane.sides[0].data.solver_body_id == lane.sides[1].data.solver_body_id;
++        let total_response: [_; 2] = std::array::from_fn(|i| {
++            if same {
++                &response[0] + &response[1]
++            } else {
++                response[i].clone()
++            }
++        });
++        for i in 0..2 {
++            let actual = &end[i] - &lane.sides[i].velocity;
++            let change = kinetic_change(&lane.sides[i].velocity, &end[i], &lane.sides[i].mass);
++            lane.sides[i].data.after_velocity = six_array(&end[i]);
++            lane.sides[i].data.actual_delta_velocity = six_array(&actual);
++            lane.sides[i].data.stored_response_delta_velocity = six_array(&total_response[i]);
++            lane.sides[i].data.physical_kinetic_change_j = change;
++            if !(same && i == 1) {
++                lane.row.physical_kinetic_change_j += change;
++            }
++            lane.row.max_impulse_velocity_residual = lane
++                .row
++                .max_impulse_velocity_residual
++                .max((actual - &total_response[i]).amax());
++        }
++        lane.row.physical_minus_impulse_work_j = lane.row.physical_kinetic_change_j
++            - lane.row.normal_midpoint_work_j
++            - lane.row.tangent_midpoint_work_j;
++        lane.row.sides = lane.sides.into_iter().map(|s| s.data).collect();
++        RECORDING.with(|r| {
++            r.borrow_mut()
++                .as_mut()
++                .unwrap()
++                .rigid_contacts
++                .push(lane.row)
++        });
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::data::graph::Graph;
++    use crate::dynamics::solver::manifold_store::ManifoldStoreParts;
++    use crate::dynamics::solver::solver_contact_graph::ContactRef;
++    use crate::dynamics::{MassProperties, RigidBodyBuilder};
++    use crate::geometry::{
++        ColliderBuilder, ContactManifold, ContactPair, PairContacts, SolverContact,
++    };
++    use parry::shape::PackedFeatureId;
++
++    #[test]
++    fn rigid_midpoint_ledger_closes_coupled_rows_at_current_anisotropic_pose() {
++        let mut bodies = RigidBodySet::new();
++        let local_com = Vector::new(0.2, -0.1, 0.3);
++        let mut body = RigidBodyBuilder::dynamic()
++            .rotation(Vector::Z * core::f32::consts::FRAC_PI_2)
++            .additional_mass_properties(MassProperties::new(local_com, 3., Vector::new(1., 2., 4.)))
++            .build();
++        body.recompute_mass_properties_from_colliders(&ColliderSet::new());
++        let handle = bodies.insert(body);
++        let mut colliders = ColliderSet::new();
++        let local_pose = Pose::translation(0.05, 0.02, 0.01);
++        let collider = colliders.insert_with_parent(
++            ColliderBuilder::ball(0.1)
++                .density(0.)
++                .position(local_pose)
++                .build(),
++            handle,
++            &mut bodies,
++        );
++        let world = colliders.insert(ColliderBuilder::ball(0.1).density(0.).build());
++        bodies[handle].recompute_mass_properties_from_colliders(&colliders);
++        bodies[handle].ids.active_set_id = 0;
++        let mut solver = SolverBodies::default();
++        solver.resize(1);
++        solver.copy_from(0, &bodies[handle]);
++        // Cached body pose is deliberately stale; current solver inertia/pose
++        // remains a 90-degree rotation with world principal diagonal (2,1,4).
++        bodies[handle].pos.position.rotation = Rotation::IDENTITY;
++        let arm = Vector::new(0.4, 0.2, 0.1);
++        let anchor = solver.poses[0].rotation.inverse() * arm;
++        let world_anchor = solver.poses[0].translation + arm;
++        let mut manifold = ContactManifold::new();
++        manifold.data.rigid_body1 = Some(handle);
++        manifold.data.normal = -Vector::Y;
++        manifold.data.solver_body_ids = [0, u32::MAX];
++        manifold.data.friction = 1.;
++        let mut point = parry::query::TrackedContact::<crate::geometry::ContactData>::new(
++            anchor,
++            world_anchor,
++            PackedFeatureId::face(0),
++            PackedFeatureId::face(0),
++            0.,
++        );
++        point.data.solver_dp1 = arm;
++        manifold.points.push(point);
++        manifold.data.solver_contacts.push(SolverContact {
++            anchor1: anchor,
++            anchor2: world_anchor,
++            dist: 0.,
++            tangent_velocity: Vector::ZERO,
++            contact_id: [0],
++            padding: [0.],
++        });
++        let mut pair = ContactPair::new(collider, world);
++        let PairContacts::Rigid(rigid) = &mut pair.contacts else {
++            unreachable!()
++        };
++        rigid.manifolds.push(manifold);
++        let mut graph = Graph::<(), ContactPair>::with_capacity(2, 1);
++        let n1 = graph.add_node(());
++        let n2 = graph.add_node(());
++        graph.add_edge(n1, n2, pair);
++        let store = unsafe {
++            ManifoldStore::from_parts(ManifoldStoreParts::new(
++                graph.edges.as_mut_ptr(),
++                graph.edges.len(),
++            ))
++        };
++        let id = ContactRef {
++            edge: 0,
++            manifold: 0,
++        };
++        let ids = std::array::from_fn(|lane| if lane == 0 { id } else { ContactRef::PADDING });
++        let manifold = store.get(id);
++        let mut builder = unsafe { core::mem::zeroed() };
++        let mut c = unsafe { core::mem::zeroed() };
++        ContactWithCoulombFrictionBuilder::generate(
++            ids,
++            [manifold; SIMD_WIDTH],
++            &bodies,
++            &solver,
++            &mut builder,
++            &mut c,
++        );
++        let params = IntegrationParameters {
++            dt: 1. / 120.,
++            ..IntegrationParameters::default()
++        };
++        builder.update(&params, 0., &solver, &MultibodyJointSet::new(), &mut c);
++        c.normal_part[0].impulse = SimdReal::splat(0.7);
++        c.tangent_part[0].impulse[0] = SimdReal::splat(0.4);
++        c.tangent_part[0].impulse[1] = SimdReal::splat(0.);
++        let direction = lane_vector(c.dir1, 0);
++        let tangent = lane_vector(c.tangent1, 0);
++        let impulse_n = wrench(direction, arm.cross(direction)) * 0.7;
++        let impulse_t = wrench(tangent, arm.cross(tangent)) * 0.4;
++        let diagonal = VectorN::from_vec(vec![3., 3., 3., 2., 1., 4.]);
++        let cross = impulse_n.dot(&impulse_t.component_div(&diagonal));
++        assert!(cross.abs() > 1e-4, "fixture lost coupled row work");
++        let (_, report) = super::super::record_with_colliders(&colliders, || {
++            let s = before(
++                &c,
++                &builder,
++                &solver,
++                &[handle],
++                &bodies,
++                &MultibodyJointSet::new(),
++                &store,
++                &params,
++                "warmstart",
++                false,
++                0.,
++                0,
++                true,
++            );
++            c.warmstart(&mut solver);
++            after(s, &c, &solver);
++        });
++        assert_eq!(
++            report.rigid_len(),
++            1,
++            "padding lanes must not duplicate the physical block"
++        );
++        assert_eq!(report.len(), 0, "legacy generic count changed");
++        let row = &report.rigid_contacts[0];
++        let end = six(solver.vels[0]);
++        let independent_energy = 0.5 * end.dot(&end.component_mul(&diagonal));
++        assert!((row.physical_kinetic_change_j - independent_energy).abs() < 2e-7);
++        assert!(row.physical_minus_impulse_work_j.abs() < 2e-7);
++        assert!(row.max_impulse_velocity_residual < 2e-7);
++        let separate_rows = 0.5
++            * (impulse_n.dot(&impulse_n.component_div(&diagonal))
++                + impulse_t.dot(&impulse_t.component_div(&diagonal)));
++        assert!((independent_energy - separate_rows - cross).abs() < 2e-7);
++        let stale_diagonal = VectorN::from_vec(vec![3., 3., 3., 1., 2., 4.]);
++        let stale_energy = 0.5 * end.dot(&end.component_mul(&stale_diagonal));
++        assert!((independent_energy - stale_energy).abs() > 1e-4);
++        let expected = solver.poses[0].pose();
++        let expected_origin = Pose::from_parts(
++            expected.translation - expected.rotation * local_com,
++            expected.rotation,
++        );
++        let expected_collider = pose_work(expected_origin * local_pose);
++        let actual_collider = row.collider_world_poses[0].unwrap();
++        assert_eq!(actual_collider.translation, expected_collider.translation);
++        assert_eq!(
++            actual_collider.rotation_xyzw,
++            expected_collider.rotation_xyzw
++        );
++        assert_eq!(row.sides[0].physical_pose_source, "current_solver_com");
++        assert_eq!(row.sides[1].solver_body_id, u32::MAX);
++        assert!(
++            (Vector::from_array(row.points[0].world_anchors_m[0].map(|x| x as f32)) - world_anchor)
++                .length()
++                < 1e-7
++        );
++    }
++
++    #[test]
++    fn all_padding_rigid_chunk_never_resolves_body_or_manifold_sentinels() {
++        let mut c: ContactWithCoulombFriction<SimdReal> = unsafe { core::mem::zeroed() };
++        c.manifold_id = [ContactRef::PADDING; SIMD_WIDTH];
++        c.solver_vel1 = [u32::MAX; SIMD_WIDTH];
++        c.solver_vel2 = [u32::MAX; SIMD_WIDTH];
++        let builder = unsafe { core::mem::zeroed() };
++        let solver = SolverBodies::default();
++        let store =
++            unsafe { ManifoldStore::from_parts(ManifoldStoreParts::new(core::ptr::null_mut(), 0)) };
++        let (_, report) = super::super::record(|| {
++            let s = before(
++                &c,
++                &builder,
++                &solver,
++                &[],
++                &RigidBodySet::new(),
++                &MultibodyJointSet::new(),
++                &store,
++                &IntegrationParameters::default(),
++                "solve",
++                false,
++                0.,
++                0,
++                true,
++            );
++            after(s, &c, &solver);
++        });
++        assert_eq!(report.rigid_len(), 0);
++        assert_eq!(report.len(), 0);
++    }
++}

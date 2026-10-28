@@ -31,6 +31,8 @@
 pub mod advection;
 pub mod clump;
 pub mod constants;
+mod contact;
+mod contact_grid;
 pub mod grid;
 pub mod heightfield;
 pub mod kernels;

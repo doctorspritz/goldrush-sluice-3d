@@ -1,0 +1,369 @@
+{
+  "base_commit": "278d38fbe5cc2d2db01d94d2ccbbb2ca9eea5f17",
+  "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/convex-contact-final-20261025",
+  "previous_goal_turn": "progress",
+  "changed_sources": {
+    "crates/mining-sim/src/soil_contacts.rs": "5852ee9c21e9bb2b66e8bddffac2ab30e93a77e695f6b94fc682a861086fb829",
+    "crates/mining-sim/src/soil_contacts/convex_sat.rs": "021388ce699235dbbc4a9ff75b27e3a93dba63f6b37da34709cd83fbf06cff99",
+    "crates/mining-sim/src/articulation/retained/tests/rigid_work.rs": "1bb38b4b80cce46344f614409b5ee95ffb6a7012c4075924ab4fc0c67de5ea1d"
+  },
+  "other_protected_sources_unchanged": 712,
+  "source_manifest_sha256": "74cdf8b3cb20e2da612adf9be8ea5c1663c57d212b69255526d920e3e308c67b",
+  "fixtures": {
+    "crates/mining-sim/src/soil_contacts/fixtures/positive_zero_normal.json": "1be9d34b05c8141b0e8a4aa4382a270014659013a3af823ea7838f6f566ef316",
+    "crates/mining-sim/src/soil_contacts/fixtures/vertex_touch.json": "2aede7654559c173b3f452cf4b339f275bde970788b4347b4ef40335c5685344",
+    "crates/mining-sim/src/soil_contacts/fixtures/positive_tiny_direction.json": "5466d0f64b5cd3eee8ad104b0ee6ea48c762a431b89750ebccbd172a85416769",
+    "crates/mining-sim/src/soil_contacts/fixtures/duplicate_feature_ids.json": "8dd1edfeefca6289c36863237b74b55fcfe0bf4b5122411428856a9d87c6f195",
+    "crates/mining-sim/src/soil_contacts/fixtures/positive_inward_projection.json": "9da5eb964175170adbf3973782f7bdd8d553eedd7f4f3a05bed5e45e8c5cbf6e",
+    "crates/mining-sim/src/soil_contacts/fixtures/positive_sliver_boundary.json": "edf851271a213039998ff8a7845597e6d7f433c3c0d8f0039ae7ae7dd65686fe",
+    "crates/mining-sim/src/soil_contacts/fixtures/positive_bad_closest.json": "dacc75d9ecf15a83b85eb5d283a6782bbbd70db79d6bbfe5978f5fd421e4bb9f",
+    "crates/mining-sim/src/soil_contacts/fixtures/collinear_touch.json": "df992536d9f6d05abdc2064806c49534b98041c4d25c2ff8e065f217537fde8f",
+    "crates/mining-sim/src/soil_contacts/fixtures/nearly_parallel_edges.json": "7f675edc2335fb1bc49c21bd902edeb167627129f67319ba213a0264ae2e226d"
+  },
+  "inputs": {
+    "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-geometry-20261024/fresh-verified-final/worst-before.bin": "7147a81a9830b2d27fcfca6feef4ef419ef8a09fede2899a7ab6e02af7c8db0b",
+    "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-geometry-20261024/fresh-verified-final/worst-after.bin": "6f54234a1ed418414b2fd4abb10e8c1614411668c0e8275f21532fe29c4d7dc9"
+  },
+  "post_repair_observer": {
+    "selected_300_energy_inventory_rows_exact": true,
+    "complete_state_trajectory_hashes_not_measured": true,
+    "reference_summary_sha256": "8c27b0a7e923fc894a2495d91203ef788267eecc6d38fc29aae8a1cfdb450964"
+  },
+  "trajectories": {
+    "post-repair": {
+      "summary_sha256": "55dc21357234d9c5f73a5b2f176c67a0d257a770800fc02e0ca5057daa4305d8",
+      "accepted_steps": 300,
+      "requested_steps": 300,
+      "trajectory_completed": true,
+      "actual_refusal": null,
+      "initial_inventory": {
+        "clods": 1040,
+        "dynamic_bodies": 1045,
+        "elastic_energy_j": 0.0,
+        "engine_on": false,
+        "mechanical_hz": 480,
+        "motor_rows": 0,
+        "physical_mass_kg": 9752.505223035812,
+        "pump_energy_j": 0.0,
+        "pump_work_j": 0.0,
+        "stiffness_and_damping_zero": true
+      },
+      "final_inventory": {
+        "clods": 1040,
+        "dynamic_bodies": 1045,
+        "elastic_energy_j": 0.0,
+        "engine_on": false,
+        "mechanical_hz": 480,
+        "motor_rows": 0,
+        "physical_mass_kg": 9752.505223035812,
+        "pump_energy_j": 0.0,
+        "pump_work_j": 0.0,
+        "stiffness_and_damping_zero": true
+      },
+      "maximum_step_energy_gain_j": 27.888699363800697,
+      "energy_violation_count": 77,
+      "net_energy_gain_j": -267.1417663343309,
+      "physical_passivity_gate_j": 0.01,
+      "all_steps_physical_passivity_gate_passed": false,
+      "maximum_feedback_error_j": 0.0007488262026527082,
+      "observer_diagnostic_success": true,
+      "elapsed_wall_s": 61.00493025,
+      "candidate_boundary_files_written": false,
+      "saved_candidate_continuation_claimed": false,
+      "sat_diagnostics": {
+        "admitted_queries": 5070292,
+        "certified_overlapping_patches": 408849,
+        "complete_clipped_points": 1054821,
+        "duplicate_identity_patches": 53,
+        "failed_certifications": 0,
+        "failures": {},
+        "matched_history_records": 12750758,
+        "max_abs_closest_support_deficit_m": 4.285594323860664e-08,
+        "max_closest_combined_certificate_bound_m": 1.337176372651712e-07,
+        "max_closest_tangent_residual_m": 5.8097136003557576e-08,
+        "max_depth_bound_error_m": 5.98681246799515e-08,
+        "max_positive_closest_combined_bound_m": 9.99994725845191e-06,
+        "maximum_history_shift_m": 0.34323040342820654,
+        "positive_negative_queries_removed_by_existing_repair": 2012,
+        "positive_post_repair_checked_queries": 4186140,
+        "positive_post_repair_failures": {
+          "empty separated patch not proved beyond prediction distance": 1876,
+          "final separated closest witness exceeds combined support bound": 468981,
+          "final separated contact witnesses have tangential residual": 2209,
+          "final separated normal is not finite and unit": 2056,
+          "final separated patch retains a negative contact": 180,
+          "final separated point is not on both registered surfaces": 1
+        },
+        "positive_post_repair_negative_queries": 181,
+        "positive_post_repair_queries": 4661443,
+        "positive_post_repair_unproved_queries": 475303,
+        "positive_sat_gap_forwarded_to_ordinary_query": 4661443,
+        "positive_sat_gap_with_negative_ordinary_contacts": 2193,
+        "reused_history_records": 0,
+        "total_points_with_closest_witness": 1463670,
+        "unsupported_shape_or_normal_constraint_manifolds": 1997555
+      }
+    },
+    "registered": {
+      "summary_sha256": "1723f7a7fb5aaac78534dac59d21d49238648717eff1cc8fa5b31960fda0bd8d",
+      "accepted_steps": 300,
+      "requested_steps": 300,
+      "trajectory_completed": true,
+      "actual_refusal": null,
+      "initial_inventory": {
+        "clods": 1040,
+        "dynamic_bodies": 1045,
+        "elastic_energy_j": 0.0,
+        "engine_on": false,
+        "mechanical_hz": 480,
+        "motor_rows": 0,
+        "physical_mass_kg": 9752.505223035812,
+        "pump_energy_j": 0.0,
+        "pump_work_j": 0.0,
+        "stiffness_and_damping_zero": true
+      },
+      "final_inventory": {
+        "clods": 1040,
+        "dynamic_bodies": 1045,
+        "elastic_energy_j": 0.0,
+        "engine_on": false,
+        "mechanical_hz": 480,
+        "motor_rows": 0,
+        "physical_mass_kg": 9752.505223035812,
+        "pump_energy_j": 0.0,
+        "pump_work_j": 0.0,
+        "stiffness_and_damping_zero": true
+      },
+      "maximum_step_energy_gain_j": 19.31227193653467,
+      "energy_violation_count": 78,
+      "net_energy_gain_j": -318.123567368777,
+      "physical_passivity_gate_j": 0.01,
+      "all_steps_physical_passivity_gate_passed": false,
+      "maximum_feedback_error_j": 0.0006996180209171143,
+      "observer_diagnostic_success": true,
+      "elapsed_wall_s": 72.00651225,
+      "candidate_boundary_files_written": false,
+      "saved_candidate_continuation_claimed": false,
+      "sat_diagnostics": {
+        "admitted_queries": 5062479,
+        "certified_overlapping_patches": 387722,
+        "certified_positive_closest_patches": 3187018,
+        "certified_separated_outside_prediction": 1486349,
+        "complete_clipped_points": 4196180,
+        "duplicate_identity_patches": 31,
+        "failed_certifications": 1390,
+        "failures": {
+          "registered separated closest candidates fail combined support bound": 64,
+          "registered separated support features have no checked tangent intersection": 1323,
+          "rounded contact witness is not on registered hull surfaces": 3
+        },
+        "matched_history_records": 6264749,
+        "max_abs_closest_support_deficit_m": 5.100378230871172e-08,
+        "max_closest_combined_certificate_bound_m": 1.731432110273541e-07,
+        "max_closest_tangent_residual_m": 7.783117836152068e-08,
+        "max_depth_bound_error_m": 7.74608344134009e-08,
+        "max_positive_closest_combined_bound_m": 9.05264426439314e-08,
+        "maximum_history_shift_m": 0.34323167368505614,
+        "negative_ordinary_positive_queries_rebuilt": 1575,
+        "positive_negative_queries_removed_by_existing_repair": 0,
+        "positive_post_repair_checked_queries": 4673367,
+        "positive_post_repair_failures": {},
+        "positive_post_repair_negative_queries": 0,
+        "positive_post_repair_queries": 4673367,
+        "positive_post_repair_unproved_queries": 0,
+        "positive_sat_gap_forwarded_to_ordinary_query": 0,
+        "positive_sat_gap_with_negative_ordinary_contacts": 0,
+        "reused_history_records": 0,
+        "total_points_with_closest_witness": 7770920,
+        "unsupported_shape_or_normal_constraint_manifolds": 2021846
+      }
+    },
+    "stable": {
+      "summary_sha256": "0e17f6a1ad376b2e2f97e878ca974c6cc0ea4429efe41371f6cd7d9931642306",
+      "accepted_steps": 300,
+      "requested_steps": 300,
+      "trajectory_completed": true,
+      "actual_refusal": null,
+      "initial_inventory": {
+        "clods": 1040,
+        "dynamic_bodies": 1045,
+        "elastic_energy_j": 0.0,
+        "engine_on": false,
+        "mechanical_hz": 480,
+        "motor_rows": 0,
+        "physical_mass_kg": 9752.505223035812,
+        "pump_energy_j": 0.0,
+        "pump_work_j": 0.0,
+        "stiffness_and_damping_zero": true
+      },
+      "final_inventory": {
+        "clods": 1040,
+        "dynamic_bodies": 1045,
+        "elastic_energy_j": 0.0,
+        "engine_on": false,
+        "mechanical_hz": 480,
+        "motor_rows": 0,
+        "physical_mass_kg": 9752.505223035812,
+        "pump_energy_j": 0.0,
+        "pump_work_j": 0.0,
+        "stiffness_and_damping_zero": true
+      },
+      "maximum_step_energy_gain_j": 31.73102390067652,
+      "energy_violation_count": 56,
+      "net_energy_gain_j": -306.8294489592663,
+      "physical_passivity_gate_j": 0.01,
+      "all_steps_physical_passivity_gate_passed": false,
+      "maximum_feedback_error_j": 0.0007566371496068314,
+      "observer_diagnostic_success": true,
+      "elapsed_wall_s": 96.673283583,
+      "candidate_boundary_files_written": false,
+      "saved_candidate_continuation_claimed": false,
+      "sat_diagnostics": {
+        "admitted_queries": 5058837,
+        "certified_overlapping_patches": 427739,
+        "certified_positive_closest_patches": 3178194,
+        "certified_separated_outside_prediction": 1452904,
+        "complete_clipped_points": 4292116,
+        "duplicate_identity_patches": 58,
+        "failed_certifications": 0,
+        "failures": {},
+        "matched_history_records": 6279605,
+        "max_abs_closest_support_deficit_m": 5.2516839321725683e-08,
+        "max_closest_combined_certificate_bound_m": 1.610020687044412e-07,
+        "max_closest_tangent_residual_m": 7.973461927252273e-08,
+        "max_depth_bound_error_m": 7.297844151210597e-08,
+        "max_positive_closest_combined_bound_m": 9.360752328864486e-08,
+        "maximum_history_shift_m": 0.343231764948907,
+        "negative_ordinary_positive_queries_rebuilt": 2915,
+        "positive_negative_queries_removed_by_existing_repair": 0,
+        "positive_post_repair_checked_queries": 4631098,
+        "positive_post_repair_failures": {},
+        "positive_post_repair_negative_queries": 0,
+        "positive_post_repair_queries": 4631098,
+        "positive_post_repair_unproved_queries": 0,
+        "positive_sat_gap_forwarded_to_ordinary_query": 0,
+        "positive_sat_gap_with_negative_ordinary_contacts": 0,
+        "reused_history_records": 0,
+        "total_points_with_closest_witness": 7898049,
+        "unsupported_shape_or_normal_constraint_manifolds": 2024909
+      }
+    }
+  },
+  "saved_steps": {
+    "saved-baseline": {
+      "summary_sha256": "b8f033e6f316adf3e55ecf59f1f0c4292e7dd0e45ece6109dfc6e18b95362834",
+      "complete_numerical_boundary_exact": true,
+      "saved_reference_equality_required_and_evaluated": true,
+      "independent_energy_delta_j": 57.216923396044876,
+      "phase_minus_body_j": 3.0625087674707174e-06,
+      "observer_agreement_limit_j": 0.0001,
+      "observer_success": true,
+      "physical_passivity_gate_j": 0.01,
+      "physical_passivity_gate_passed": false,
+      "rigid_blocks": 1010800,
+      "generic_blocks": 5244,
+      "all_observed_rows_folded": true,
+      "contact_physical_work_buckets_closed": true,
+      "all_clustered_contact_geometry_certified": false,
+      "candidate_boundary_files_written": false,
+      "candidate_persistence_probe": null,
+      "saved_candidate_continuation_claimed": false,
+      "registered_shapes_and_collider_attachments_unchanged": true
+    },
+    "saved-registered": {
+      "summary_sha256": "0eb0626cc9ba39cb385d03409a1dfc64039c47c302b11d7c81cec1a982fb3335",
+      "complete_numerical_boundary_exact": false,
+      "saved_reference_equality_required_and_evaluated": false,
+      "independent_energy_delta_j": 42.59900004885276,
+      "phase_minus_body_j": 1.8414284568279982e-06,
+      "observer_agreement_limit_j": 0.0001,
+      "observer_success": true,
+      "physical_passivity_gate_j": 0.01,
+      "physical_passivity_gate_passed": false,
+      "rigid_blocks": 987012,
+      "generic_blocks": 5244,
+      "all_observed_rows_folded": true,
+      "contact_physical_work_buckets_closed": true,
+      "all_clustered_contact_geometry_certified": false,
+      "candidate_boundary_files_written": false,
+      "candidate_persistence_probe": {
+        "candidate_boundary_file_written": false,
+        "candidate_persistence_supported": false,
+        "ram_decode_refused": true,
+        "ram_encode_attempted": true,
+        "refusal": "Saved retained parameters do not match the model",
+        "saved_continuation_claimed": false,
+        "stored_dispatcher_does_not_encode_test_only_refresh": true
+      },
+      "saved_candidate_continuation_claimed": false,
+      "registered_shapes_and_collider_attachments_unchanged": true
+    }
+  },
+  "quality": [
+    {
+      "name": "audit-library",
+      "exit": 0
+    },
+    {
+      "name": "default-library",
+      "exit": 0
+    },
+    {
+      "name": "saved-baseline",
+      "exit": 0
+    },
+    {
+      "name": "saved-registered",
+      "exit": 0
+    },
+    {
+      "name": "clippy",
+      "exit": 0
+    },
+    {
+      "name": "explicit-format",
+      "exit": 0
+    },
+    {
+      "name": "package-format",
+      "exit": 0
+    },
+    {
+      "name": "whitespace",
+      "exit": 0
+    }
+  ],
+  "audit_library_passed": 60,
+  "audit_library_ignored_not_counted": 17,
+  "default_library_passed": 23,
+  "native_or_gpu_tests_this_stage": false,
+  "installed_apps_unchanged": {
+    "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/target/bundles/First Bend.app": "13f4960de14978156db129a38959b91df124b157804cb9cdbc3a5b777d25a263",
+    "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-mud-followup-20261025/app/First Bend.app": "13f4960de14978156db129a38959b91df124b157804cb9cdbc3a5b777d25a263"
+  },
+  "original_dirty_files_preserved": 9,
+  "preserved_stash": [
+    "a6c6b857da29269271eebb03025767414eabde90"
+  ],
+  "new_crash_reports": [],
+  "no_runtime_or_save_policy_adoption": true,
+  "remaining_limits": [
+    "physical energy/passivity failure",
+    "coherent current normals/Jacobians and friction history",
+    "unsupported shape/normal-constraint and terrain/union ownership",
+    "loaded retention and timestep refinement",
+    "wet/cohesive soil, pads, shaker deck, buildup, settling/recirculation and complete real-time operation"
+  ],
+  "full_goal_complete": false,
+  "beads": {
+    "rows": [
+      "sluice-convex-feature-validity-20261024",
+      "sluice-rigid-bias-work-20261024",
+      "sluice-rigid-anchor-objectivity-20261024",
+      "sluice-contact-frame-cadence-20261025"
+    ],
+    "sync_exit": 1,
+    "manual_scoped_export": true
+  },
+  "cleanup": "agent_browser: processes=0 rss_mib=0.0\nplaywright_tests: processes=0 rss_mib=0.0\nplaywright_mcp: processes=16 rss_mib=367.6\nchrome_for_testing: processes=0 rss_mib=0.0\nnode_ecosystem: processes=64 rss_mib=1472.0\n"
+}

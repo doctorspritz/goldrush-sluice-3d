@@ -1,0 +1,35 @@
+{
+  "sim_seconds": 28.016668127849698,
+  "water": 232395,
+  "mean_vx": 0.1719013357003759,
+  "rms_vy": 0.13908640946753162,
+  "fraction_upward_gt_0.2": 0.0,
+  "fraction_downstream_gt_0.2": 0.4365412336754233,
+  "returned_m3": 0.07601312480808531,
+  "water_balance_error": -7.334262364100397e-11,
+  "baseline": {
+    "source_head": "79f560f",
+    "simulation_time": 28.016668127849698,
+    "water_particles": 123784,
+    "mean_downstream_ms": 0.09019133152570812,
+    "fraction_downstream_over_0_2_ms": 0.11099980611387579,
+    "flow_m3s": 0.006,
+    "feed_m3s": 0.003
+  },
+  "restored_settings": {
+    "geometry_cells": [
+      150,
+      52,
+      40
+    ],
+    "outlet_buffer_cells": 12,
+    "cell_m": 0.01,
+    "pressure_iterations": 80,
+    "substeps": 4,
+    "flow_m3s": 0.00375,
+    "feed_m3s": 0.001,
+    "slope_deg": 9.833563964207116,
+    "fixture_sha256": "934d3c40f7f3922ac16cba493736758f32112562de20e062bc15f6d435b9834b"
+  },
+  "comparison_limit": "Different geometry and operating rates; a scene comparison, not a controlled calibration of material recovery."
+}

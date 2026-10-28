@@ -1,0 +1,824 @@
+{
+  "base_commit": "64bccb4892bac4a4ac89defdaba1c3d933050650",
+  "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-frame-cadence-20261025",
+  "changed_sources": {
+    "crates/mining-sim/src/articulation/retained/tests/rigid_work.rs": "0596608fb521a110484154bc02e5343820fc9cccf88826387766da79cd5e69fc",
+    "crates/mining-sim/src/articulation/retained/tests/rigid_work/cadence.rs": "993d91bb938eed8109697a247354030be058acd11ff93a60896a1dc6e72b7a4f"
+  },
+  "other_crate_rust_sources_unchanged": 306,
+  "tracked_vendor_sources_unchanged": true,
+  "original_dirty_files_unchanged": 9,
+  "preserved_stash": [
+    "a6c6b857da29269271eebb03025767414eabde90"
+  ],
+  "installed_app_sha256_unchanged": "13f4960de14978156db129a38959b91df124b157804cb9cdbc3a5b777d25a263",
+  "checks": [
+    {
+      "check": "saved-baseline",
+      "exit": 0,
+      "wall_s": 69.37140308396192
+    },
+    {
+      "check": "saved-outer_480_legacy",
+      "exit": 0,
+      "wall_s": 52.63757954200264
+    },
+    {
+      "check": "saved-outer_1920_legacy",
+      "exit": 0,
+      "wall_s": 43.957203625002876
+    },
+    {
+      "check": "saved-outer_480_material",
+      "exit": 0,
+      "wall_s": 51.13707216701005
+    },
+    {
+      "check": "saved-outer_1920_material",
+      "exit": 0,
+      "wall_s": 47.60297349997563
+    },
+    {
+      "check": "trajectory-outer_480_legacy",
+      "exit": 0,
+      "wall_s": 176.08442154101795
+    },
+    {
+      "check": "audit-library-final",
+      "exit": 0,
+      "wall_s": 84.10339791700244
+    },
+    {
+      "check": "long-trajectory-outer_1920_legacy",
+      "exit": 0,
+      "wall_s": 312.2810052080313
+    },
+    {
+      "check": "trajectory-outer_480_material",
+      "exit": 0,
+      "wall_s": 98.67433645803249
+    },
+    {
+      "check": "trajectory-outer_1920_material",
+      "exit": 0,
+      "wall_s": 311.78299675002927
+    },
+    {
+      "check": "default-library",
+      "exit": 0,
+      "wall_s": 0.8108095420175232
+    },
+    {
+      "check": "clippy",
+      "exit": 0,
+      "wall_s": 6.871517582971137
+    },
+    {
+      "check": "format",
+      "exit": 0,
+      "wall_s": 0.5594887920306064
+    },
+    {
+      "check": "diff-check",
+      "exit": 0,
+      "wall_s": 0.3100262090447359
+    },
+    {
+      "check": "final-saved-baseline",
+      "exit": 0,
+      "wall_s": 31.659413292014506
+    },
+    {
+      "check": "final-saved-outer_1920_legacy",
+      "exit": 0,
+      "wall_s": 23.852940207987558
+    },
+    {
+      "check": "final-saved-outer_1920_material",
+      "exit": 0,
+      "wall_s": 23.589624707994517
+    }
+  ],
+  "initial_attempts": [
+    {
+      "check": "saved-baseline",
+      "exit": 0,
+      "wall_s": 69.37140308396192
+    },
+    {
+      "check": "saved-outer_480_legacy",
+      "exit": 0,
+      "wall_s": 52.63757954200264
+    },
+    {
+      "check": "saved-outer_1920_legacy",
+      "exit": 0,
+      "wall_s": 43.957203625002876
+    },
+    {
+      "check": "saved-outer_480_material",
+      "exit": 0,
+      "wall_s": 51.13707216701005
+    },
+    {
+      "check": "saved-outer_1920_material",
+      "exit": 0,
+      "wall_s": 47.60297349997563
+    },
+    {
+      "check": "trajectory-outer_480_legacy",
+      "exit": 0,
+      "wall_s": 176.08442154101795
+    },
+    {
+      "check": "trajectory-outer_1920_legacy",
+      "exit": 124,
+      "wall_s": 600.2574210419552
+    }
+  ],
+  "reporting_correction_replays": [
+    {
+      "check": "final-saved-baseline",
+      "exit": 0,
+      "wall_s": 31.659413292014506
+    },
+    {
+      "check": "final-saved-outer_1920_legacy",
+      "exit": 0,
+      "wall_s": 23.852940207987558
+    },
+    {
+      "check": "final-saved-outer_1920_material",
+      "exit": 0,
+      "wall_s": 23.589624707994517
+    }
+  ],
+  "report_label_correction_work_evidence_exact": true,
+  "nominal_macro_dt_s": 0.0020833333333333333,
+  "fresh_bank_nominal_duration_s": 0.625,
+  "audit_library": {
+    "passed": 60,
+    "ignored": 18,
+    "failed": 0
+  },
+  "default_library": {
+    "passed": 23,
+    "failed": 0
+  },
+  "saved_observer_summary_structurally_exact": true,
+  "saved_after_state_byte_exact": true,
+  "registered_macro480_saved_energy_exact": true,
+  "registered_macro480_selected_300_energy_and_inventory_records_exact": true,
+  "full_numerical_trajectory_hashes_measured": false,
+  "cadence_saved_rigid_and_generic_blocks_folded": 3968853,
+  "maximum_saved_phase_body_closure_error_j": 1.809868263080716e-05,
+  "observer_agreement_limit_j": 0.0001,
+  "results": {
+    "saved-outer_480_legacy": {
+      "maximum_macro_gain_j": 42.59900004885276,
+      "macro_energy_violations": 1,
+      "maximum_micro_gain_j": null,
+      "micro_energy_violations": null,
+      "net_energy_gain_j": 42.59900004885276,
+      "maximum_feedback_error_j": 2.383236278546974e-06,
+      "maximum_macro_feedback_error_j": 2.383236278546974e-06,
+      "elapsed_wall_s": 51.806003625,
+      "all_macro_gates_passed": false,
+      "all_micro_gates_passed": null,
+      "accepted_macro_steps": 1,
+      "world_steps_per_macro": 1,
+      "sat": {
+        "admitted_queries": 16905,
+        "certified_overlapping_patches": 2707,
+        "certified_positive_closest_patches": 9385,
+        "certified_separated_outside_prediction": 4813,
+        "complete_clipped_points": 16070,
+        "duplicate_identity_patches": 0,
+        "failed_certifications": 0,
+        "matched_history_records": 17192,
+        "max_abs_closest_support_deficit_m": 3.984626295583382e-08,
+        "max_closest_combined_certificate_bound_m": 1.3804554182755714e-07,
+        "max_closest_tangent_residual_m": 5.7978107918382294e-08,
+        "max_depth_bound_error_m": 5.4646973834948653e-08,
+        "max_positive_closest_combined_bound_m": 6.865789293542889e-08,
+        "maximum_history_shift_m": 0.3093652652200773,
+        "negative_ordinary_positive_queries_rebuilt": 9,
+        "positive_negative_queries_removed_by_existing_repair": 0,
+        "positive_post_repair_checked_queries": 14198,
+        "positive_post_repair_negative_queries": 0,
+        "positive_post_repair_queries": 14198,
+        "positive_post_repair_unproved_queries": 0,
+        "positive_sat_gap_forwarded_to_ordinary_query": 0,
+        "positive_sat_gap_with_negative_ordinary_contacts": 0,
+        "reused_history_records": 0,
+        "total_points_with_closest_witness": 28162,
+        "unsupported_shape_or_normal_constraint_manifolds": 6718
+      },
+      "final_pose": {
+        "all_dynamic_poses_and_velocities_finite": true,
+        "dynamic_bodies": 1045,
+        "maximum_angular_speed_rad_s": 3.4272212982177734,
+        "maximum_linear_speed_m_s": 0.44088566303253174,
+        "position_max_m": [
+          19.6886043548584,
+          2.747389793395996,
+          22.93864631652832
+        ],
+        "position_min_m": [
+          18.311752319335938,
+          0.405787855386734,
+          16.899999618530273
+        ]
+      }
+    },
+    "saved-outer_1920_legacy": {
+      "maximum_macro_gain_j": 17.834134772681864,
+      "macro_energy_violations": 1,
+      "maximum_micro_gain_j": 12.394636095821625,
+      "micro_energy_violations": 3,
+      "net_energy_gain_j": 17.834134772681864,
+      "maximum_feedback_error_j": 4.922208972857334e-06,
+      "maximum_macro_feedback_error_j": 6.0965730881434865e-06,
+      "elapsed_wall_s": 23.25396575,
+      "all_macro_gates_passed": false,
+      "all_micro_gates_passed": false,
+      "accepted_macro_steps": 1,
+      "world_steps_per_macro": 4,
+      "sat": {
+        "admitted_queries": 67616,
+        "certified_overlapping_patches": 9866,
+        "certified_positive_closest_patches": 38500,
+        "certified_separated_outside_prediction": 19250,
+        "complete_clipped_points": 63758,
+        "duplicate_identity_patches": 0,
+        "failed_certifications": 0,
+        "matched_history_records": 79493,
+        "max_abs_closest_support_deficit_m": 4.382620422127559e-08,
+        "max_closest_combined_certificate_bound_m": 1.4546765083013055e-07,
+        "max_closest_tangent_residual_m": 7.168781275532996e-08,
+        "max_depth_bound_error_m": 5.4646973834948653e-08,
+        "max_positive_closest_combined_bound_m": 7.888709368433399e-08,
+        "maximum_history_shift_m": 0.34133427944341177,
+        "negative_ordinary_positive_queries_rebuilt": 25,
+        "positive_negative_queries_removed_by_existing_repair": 0,
+        "positive_post_repair_checked_queries": 57750,
+        "positive_post_repair_negative_queries": 0,
+        "positive_post_repair_queries": 57750,
+        "positive_post_repair_unproved_queries": 0,
+        "positive_sat_gap_forwarded_to_ordinary_query": 0,
+        "positive_sat_gap_with_negative_ordinary_contacts": 0,
+        "reused_history_records": 0,
+        "total_points_with_closest_witness": 112124,
+        "unsupported_shape_or_normal_constraint_manifolds": 26864
+      },
+      "final_pose": {
+        "all_dynamic_poses_and_velocities_finite": true,
+        "dynamic_bodies": 1045,
+        "maximum_angular_speed_rad_s": 9.342560768127441,
+        "maximum_linear_speed_m_s": 0.35312846302986145,
+        "position_max_m": [
+          19.688608169555664,
+          2.747372627258301,
+          22.938631057739258
+        ],
+        "position_min_m": [
+          18.31175422668457,
+          0.4057869017124176,
+          16.899999618530273
+        ]
+      }
+    },
+    "saved-outer_480_material": {
+      "maximum_macro_gain_j": 42.5878855107585,
+      "macro_energy_violations": 1,
+      "maximum_micro_gain_j": null,
+      "micro_energy_violations": null,
+      "net_energy_gain_j": 42.5878855107585,
+      "maximum_feedback_error_j": 6.480100637418218e-06,
+      "maximum_macro_feedback_error_j": 6.480100637418218e-06,
+      "elapsed_wall_s": 50.582863916,
+      "all_macro_gates_passed": false,
+      "all_micro_gates_passed": null,
+      "accepted_macro_steps": 1,
+      "world_steps_per_macro": 1,
+      "sat": {
+        "admitted_queries": 16905,
+        "certified_overlapping_patches": 2707,
+        "certified_positive_closest_patches": 9385,
+        "certified_separated_outside_prediction": 4813,
+        "complete_clipped_points": 16070,
+        "duplicate_identity_patches": 0,
+        "failed_certifications": 0,
+        "matched_history_records": 17192,
+        "max_abs_closest_support_deficit_m": 3.984626295583382e-08,
+        "max_closest_combined_certificate_bound_m": 1.3804554182755714e-07,
+        "max_closest_tangent_residual_m": 5.7978107918382294e-08,
+        "max_depth_bound_error_m": 5.4646973834948653e-08,
+        "max_positive_closest_combined_bound_m": 6.865789293542889e-08,
+        "maximum_history_shift_m": 0.3093652652200773,
+        "negative_ordinary_positive_queries_rebuilt": 9,
+        "positive_negative_queries_removed_by_existing_repair": 0,
+        "positive_post_repair_checked_queries": 14198,
+        "positive_post_repair_negative_queries": 0,
+        "positive_post_repair_queries": 14198,
+        "positive_post_repair_unproved_queries": 0,
+        "positive_sat_gap_forwarded_to_ordinary_query": 0,
+        "positive_sat_gap_with_negative_ordinary_contacts": 0,
+        "reused_history_records": 0,
+        "total_points_with_closest_witness": 28162,
+        "unsupported_shape_or_normal_constraint_manifolds": 6718
+      },
+      "final_pose": {
+        "all_dynamic_poses_and_velocities_finite": true,
+        "dynamic_bodies": 1045,
+        "maximum_angular_speed_rad_s": 3.4027602672576904,
+        "maximum_linear_speed_m_s": 0.44079527258872986,
+        "position_max_m": [
+          19.6886043548584,
+          2.747389793395996,
+          22.93864631652832
+        ],
+        "position_min_m": [
+          18.311752319335938,
+          0.40578776597976685,
+          16.899999618530273
+        ]
+      }
+    },
+    "saved-outer_1920_material": {
+      "maximum_macro_gain_j": 17.858070638612844,
+      "macro_energy_violations": 1,
+      "maximum_micro_gain_j": 12.397963284747675,
+      "micro_energy_violations": 3,
+      "net_energy_gain_j": 17.858070638612844,
+      "maximum_feedback_error_j": 6.125721483840607e-06,
+      "maximum_macro_feedback_error_j": 2.8153481252957135e-06,
+      "elapsed_wall_s": 23.234553625,
+      "all_macro_gates_passed": false,
+      "all_micro_gates_passed": false,
+      "accepted_macro_steps": 1,
+      "world_steps_per_macro": 4,
+      "sat": {
+        "admitted_queries": 67616,
+        "certified_overlapping_patches": 9915,
+        "certified_positive_closest_patches": 38451,
+        "certified_separated_outside_prediction": 19250,
+        "complete_clipped_points": 63872,
+        "duplicate_identity_patches": 0,
+        "failed_certifications": 0,
+        "matched_history_records": 79710,
+        "max_abs_closest_support_deficit_m": 4.4244214292277206e-08,
+        "max_closest_combined_certificate_bound_m": 1.3804554182755714e-07,
+        "max_closest_tangent_residual_m": 6.407533705018551e-08,
+        "max_depth_bound_error_m": 5.4646973834948653e-08,
+        "max_positive_closest_combined_bound_m": 7.59271846557185e-08,
+        "maximum_history_shift_m": 0.33950388552365507,
+        "negative_ordinary_positive_queries_rebuilt": 27,
+        "positive_negative_queries_removed_by_existing_repair": 0,
+        "positive_post_repair_checked_queries": 57701,
+        "positive_post_repair_negative_queries": 0,
+        "positive_post_repair_queries": 57701,
+        "positive_post_repair_unproved_queries": 0,
+        "positive_sat_gap_forwarded_to_ordinary_query": 0,
+        "positive_sat_gap_with_negative_ordinary_contacts": 0,
+        "reused_history_records": 0,
+        "total_points_with_closest_witness": 112238,
+        "unsupported_shape_or_normal_constraint_manifolds": 26864
+      },
+      "final_pose": {
+        "all_dynamic_poses_and_velocities_finite": true,
+        "dynamic_bodies": 1045,
+        "maximum_angular_speed_rad_s": 9.27344799041748,
+        "maximum_linear_speed_m_s": 0.3532133102416992,
+        "position_max_m": [
+          19.688608169555664,
+          2.747372627258301,
+          22.938631057739258
+        ],
+        "position_min_m": [
+          18.311752319335938,
+          0.4057873785495758,
+          16.899999618530273
+        ]
+      }
+    },
+    "trajectory-outer_480_legacy": {
+      "maximum_macro_gain_j": 31.73102390067652,
+      "macro_energy_violations": 56,
+      "maximum_micro_gain_j": null,
+      "micro_energy_violations": null,
+      "net_energy_gain_j": -306.8294489592663,
+      "maximum_feedback_error_j": 0.0007566371496068314,
+      "maximum_macro_feedback_error_j": 0.0007566371496068314,
+      "elapsed_wall_s": 175.367295291,
+      "all_macro_gates_passed": false,
+      "all_micro_gates_passed": null,
+      "accepted_macro_steps": 300,
+      "world_steps_per_macro": 1,
+      "sat": {
+        "admitted_queries": 5058837,
+        "certified_overlapping_patches": 427739,
+        "certified_positive_closest_patches": 3178194,
+        "certified_separated_outside_prediction": 1452904,
+        "complete_clipped_points": 4292116,
+        "duplicate_identity_patches": 58,
+        "failed_certifications": 0,
+        "matched_history_records": 6279605,
+        "max_abs_closest_support_deficit_m": 5.2516839321725683e-08,
+        "max_closest_combined_certificate_bound_m": 1.610020687044412e-07,
+        "max_closest_tangent_residual_m": 7.973461927252273e-08,
+        "max_depth_bound_error_m": 7.297844151210597e-08,
+        "max_positive_closest_combined_bound_m": 9.360752328864486e-08,
+        "maximum_history_shift_m": 0.343231764948907,
+        "negative_ordinary_positive_queries_rebuilt": 2915,
+        "positive_negative_queries_removed_by_existing_repair": 0,
+        "positive_post_repair_checked_queries": 4631098,
+        "positive_post_repair_negative_queries": 0,
+        "positive_post_repair_queries": 4631098,
+        "positive_post_repair_unproved_queries": 0,
+        "positive_sat_gap_forwarded_to_ordinary_query": 0,
+        "positive_sat_gap_with_negative_ordinary_contacts": 0,
+        "reused_history_records": 0,
+        "total_points_with_closest_witness": 7898049,
+        "unsupported_shape_or_normal_constraint_manifolds": 2024909
+      },
+      "final_pose": {
+        "all_dynamic_poses_and_velocities_finite": true,
+        "dynamic_bodies": 1045,
+        "maximum_angular_speed_rad_s": 8.728858947753906,
+        "maximum_linear_speed_m_s": 2.5960583686828613,
+        "position_max_m": [
+          19.704814910888672,
+          2.321950912475586,
+          22.944339752197266
+        ],
+        "position_min_m": [
+          18.30242156982422,
+          0.40815696120262146,
+          16.899999618530273
+        ]
+      }
+    },
+    "trajectory-outer_1920_legacy": {
+      "maximum_macro_gain_j": 24.521658462501364,
+      "macro_energy_violations": 55,
+      "maximum_micro_gain_j": 7.309087563102366,
+      "micro_energy_violations": 236,
+      "net_energy_gain_j": -248.0997555735521,
+      "maximum_feedback_error_j": 0.000892011607902532,
+      "maximum_macro_feedback_error_j": 0.0010704854457799229,
+      "elapsed_wall_s": 311.68332675,
+      "all_macro_gates_passed": false,
+      "all_micro_gates_passed": false,
+      "accepted_macro_steps": 300,
+      "world_steps_per_macro": 4,
+      "sat": {
+        "admitted_queries": 20225627,
+        "certified_overlapping_patches": 2458097,
+        "certified_positive_closest_patches": 12022194,
+        "certified_separated_outside_prediction": 5745336,
+        "complete_clipped_points": 18597659,
+        "duplicate_identity_patches": 560,
+        "failed_certifications": 0,
+        "matched_history_records": 29092006,
+        "max_abs_closest_support_deficit_m": 5.3955962364682364e-08,
+        "max_closest_combined_certificate_bound_m": 1.8094990936470806e-07,
+        "max_closest_tangent_residual_m": 8.3521847109353e-08,
+        "max_depth_bound_error_m": 7.898222054159021e-08,
+        "max_positive_closest_combined_bound_m": 9.662530419163997e-08,
+        "maximum_history_shift_m": 0.3432322546183112,
+        "negative_ordinary_positive_queries_rebuilt": 15271,
+        "positive_negative_queries_removed_by_existing_repair": 0,
+        "positive_post_repair_checked_queries": 17767530,
+        "positive_post_repair_negative_queries": 0,
+        "positive_post_repair_queries": 17767530,
+        "positive_post_repair_unproved_queries": 0,
+        "positive_sat_gap_forwarded_to_ordinary_query": 0,
+        "positive_sat_gap_with_negative_ordinary_contacts": 0,
+        "reused_history_records": 0,
+        "total_points_with_closest_witness": 33077950,
+        "unsupported_shape_or_normal_constraint_manifolds": 8062837
+      },
+      "final_pose": {
+        "all_dynamic_poses_and_velocities_finite": true,
+        "dynamic_bodies": 1045,
+        "maximum_angular_speed_rad_s": 1.950148344039917,
+        "maximum_linear_speed_m_s": 2.6757466793060303,
+        "position_max_m": [
+          19.69859504699707,
+          2.306396722793579,
+          22.940427780151367
+        ],
+        "position_min_m": [
+          18.31127166748047,
+          0.4059772193431854,
+          16.899999618530273
+        ]
+      }
+    },
+    "trajectory-outer_480_material": {
+      "maximum_macro_gain_j": 43.170140927657485,
+      "macro_energy_violations": 71,
+      "maximum_micro_gain_j": null,
+      "micro_energy_violations": null,
+      "net_energy_gain_j": -348.3145043050463,
+      "maximum_feedback_error_j": 0.000692054524733976,
+      "maximum_macro_feedback_error_j": 0.000692054524733976,
+      "elapsed_wall_s": 98.309255458,
+      "all_macro_gates_passed": false,
+      "all_micro_gates_passed": null,
+      "accepted_macro_steps": 300,
+      "world_steps_per_macro": 1,
+      "sat": {
+        "admitted_queries": 5058183,
+        "certified_overlapping_patches": 412368,
+        "certified_positive_closest_patches": 3180040,
+        "certified_separated_outside_prediction": 1465775,
+        "complete_clipped_points": 4245400,
+        "duplicate_identity_patches": 61,
+        "failed_certifications": 0,
+        "matched_history_records": 6299198,
+        "max_abs_closest_support_deficit_m": 5.5634962414785605e-08,
+        "max_closest_combined_certificate_bound_m": 1.8135204532047587e-07,
+        "max_closest_tangent_residual_m": 8.244972393219405e-08,
+        "max_depth_bound_error_m": 7.506380961253001e-08,
+        "max_positive_closest_combined_bound_m": 8.908033951692667e-08,
+        "maximum_history_shift_m": 0.34323147129479753,
+        "negative_ordinary_positive_queries_rebuilt": 2726,
+        "positive_negative_queries_removed_by_existing_repair": 0,
+        "positive_post_repair_checked_queries": 4645815,
+        "positive_post_repair_negative_queries": 0,
+        "positive_post_repair_queries": 4645815,
+        "positive_post_repair_unproved_queries": 0,
+        "positive_sat_gap_forwarded_to_ordinary_query": 0,
+        "positive_sat_gap_with_negative_ordinary_contacts": 0,
+        "reused_history_records": 0,
+        "total_points_with_closest_witness": 7837808,
+        "unsupported_shape_or_normal_constraint_manifolds": 2021420
+      },
+      "final_pose": {
+        "all_dynamic_poses_and_velocities_finite": true,
+        "dynamic_bodies": 1045,
+        "maximum_angular_speed_rad_s": 17.404115676879883,
+        "maximum_linear_speed_m_s": 2.6311533451080322,
+        "position_max_m": [
+          19.729446411132812,
+          2.3201587200164795,
+          22.945077896118164
+        ],
+        "position_min_m": [
+          18.30528450012207,
+          0.408734530210495,
+          16.899999618530273
+        ]
+      }
+    },
+    "trajectory-outer_1920_material": {
+      "maximum_macro_gain_j": 21.82296574639622,
+      "macro_energy_violations": 63,
+      "maximum_micro_gain_j": 9.123939754470484,
+      "micro_energy_violations": 221,
+      "net_energy_gain_j": -302.74709824318415,
+      "maximum_feedback_error_j": 0.0009813433916860959,
+      "maximum_macro_feedback_error_j": 0.0009033094920596341,
+      "elapsed_wall_s": 311.433613334,
+      "all_macro_gates_passed": false,
+      "all_micro_gates_passed": false,
+      "accepted_macro_steps": 300,
+      "world_steps_per_macro": 4,
+      "sat": {
+        "admitted_queries": 20225570,
+        "certified_overlapping_patches": 2498971,
+        "certified_positive_closest_patches": 11981129,
+        "certified_separated_outside_prediction": 5745469,
+        "complete_clipped_points": 18706143,
+        "duplicate_identity_patches": 417,
+        "failed_certifications": 1,
+        "matched_history_records": 28850088,
+        "max_abs_closest_support_deficit_m": 5.217349996478049e-08,
+        "max_closest_combined_certificate_bound_m": 1.807178194661388e-07,
+        "max_closest_tangent_residual_m": 8.429284497933722e-08,
+        "max_depth_bound_error_m": 8.204348977969289e-08,
+        "max_positive_closest_combined_bound_m": 9.304636101294107e-08,
+        "maximum_history_shift_m": 0.3432308428524135,
+        "negative_ordinary_positive_queries_rebuilt": 13396,
+        "positive_negative_queries_removed_by_existing_repair": 0,
+        "positive_post_repair_checked_queries": 17726598,
+        "positive_post_repair_negative_queries": 0,
+        "positive_post_repair_queries": 17726598,
+        "positive_post_repair_unproved_queries": 0,
+        "positive_sat_gap_forwarded_to_ordinary_query": 0,
+        "positive_sat_gap_with_negative_ordinary_contacts": 0,
+        "reused_history_records": 0,
+        "total_points_with_closest_witness": 33186243,
+        "unsupported_shape_or_normal_constraint_manifolds": 8080076
+      },
+      "final_pose": {
+        "all_dynamic_poses_and_velocities_finite": true,
+        "dynamic_bodies": 1045,
+        "maximum_angular_speed_rad_s": 1.9622485637664795,
+        "maximum_linear_speed_m_s": 2.628356695175171,
+        "position_max_m": [
+          19.696990966796875,
+          2.3203201293945312,
+          22.943023681640625
+        ],
+        "position_min_m": [
+          18.311508178710938,
+          0.4060888886451721,
+          16.899999618530273
+        ]
+      }
+    }
+  },
+  "supervisors": {
+    "audit-library-final.log.supervisor.json": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 10208,
+      "discarded_log_bytes": 0
+    },
+    "audit-library.log.supervisor.json": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 10208,
+      "discarded_log_bytes": 0
+    },
+    "clippy.log.supervisor.json": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 293,
+      "discarded_log_bytes": 0
+    },
+    "compile-tests.log.supervisor.json": {
+      "exit": 101,
+      "stopped_reason": null,
+      "log_bytes": 2504,
+      "discarded_log_bytes": 0
+    },
+    "default-library.log.supervisor.json": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 2709,
+      "discarded_log_bytes": 0
+    },
+    "diff-check.log.supervisor.json": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 0,
+      "discarded_log_bytes": 0
+    },
+    "final-saved-baseline.log.supervisor.json": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 657,
+      "discarded_log_bytes": 0
+    },
+    "final-saved-outer_1920_legacy.log.supervisor.json": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 594,
+      "discarded_log_bytes": 0
+    },
+    "final-saved-outer_1920_material.log.supervisor.json": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 593,
+      "discarded_log_bytes": 0
+    },
+    "format.log.supervisor.json": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 0,
+      "discarded_log_bytes": 0
+    },
+    "long-trajectory-outer_1920_legacy.log.supervisor.json": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 1176,
+      "discarded_log_bytes": 0
+    },
+    "saved-baseline.log.supervisor.json": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 657,
+      "discarded_log_bytes": 0
+    },
+    "saved-outer_1920_legacy.log.supervisor.json": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 594,
+      "discarded_log_bytes": 0
+    },
+    "saved-outer_1920_material.log.supervisor.json": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 593,
+      "discarded_log_bytes": 0
+    },
+    "saved-outer_480_legacy.log.supervisor.json": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 574,
+      "discarded_log_bytes": 0
+    },
+    "saved-outer_480_material.log.supervisor.json": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 573,
+      "discarded_log_bytes": 0
+    },
+    "trajectory-outer_1920_legacy.log.supervisor.json": {
+      "exit": -15,
+      "stopped_reason": "deadline",
+      "log_bytes": 551,
+      "discarded_log_bytes": 0
+    },
+    "trajectory-outer_1920_material.log.supervisor.json": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 1169,
+      "discarded_log_bytes": 0
+    },
+    "trajectory-outer_480_legacy.log.supervisor.json": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 1048,
+      "discarded_log_bytes": 0
+    },
+    "trajectory-outer_480_material.log.supervisor.json": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 1142,
+      "discarded_log_bytes": 0
+    }
+  },
+  "adopted_by_session": false,
+  "new_saved_policy": false,
+  "native_performance_measured": false,
+  "output_sha256": {
+    "final-saved-baseline/summary.json": "b8f033e6f316adf3e55ecf59f1f0c4292e7dd0e45ece6109dfc6e18b95362834",
+    "final-saved-outer_1920_legacy/cadence-summary.json": "c578fd55ecff65ca961c2b4d3d0b2bfecdf12088ef8e7b8cbc0f049479ec0ed7",
+    "final-saved-outer_1920_legacy/work-1.json": "b6f1d210196ec4e268b1cc4020561b0bd04a1f049e368eb18bbacbab94a892d7",
+    "final-saved-outer_1920_legacy/work-2.json": "95dd1d0450d689fc3831dad880ffd3c8d92fc53334b04c4662ec550dd7d1d242",
+    "final-saved-outer_1920_legacy/work-3.json": "ef2d058c452d1ca4565fa7b8fc67a7a93ab959af620f11340f54c45ebb36837e",
+    "final-saved-outer_1920_legacy/work-4.json": "a323f4684858593a14e4c694c027dd4e2b774a547a0210a748eec46b9173c161",
+    "final-saved-outer_1920_material/cadence-summary.json": "78e20d2948e71d7f0883a5c1329b099070cca4a9a2a903916714344739d0b57f",
+    "final-saved-outer_1920_material/work-1.json": "c00ddebd237908f04771cc999ad3af14b2521081fb2f0b776aa7aa65f3fe1dda",
+    "final-saved-outer_1920_material/work-2.json": "dae40823fb86b5e2d3a09dd97c7dc7b26e27c9f9bddc241f8cd78f3b56651b1d",
+    "final-saved-outer_1920_material/work-3.json": "fc00343052b7a8d96ffd40c831208a27f7734047e1aa5fd2da0f87987e916eae",
+    "final-saved-outer_1920_material/work-4.json": "f1cc117aaee023973a8889eb89dd8f4393283e3c55e86f88343eef5c537a5ca9",
+    "long-trajectory-outer_1920_legacy/cadence-summary.json": "30448d946aa6dc0d60cd5bee4439ad087cd5062465526d59fdbb6ff0d2330a94",
+    "long-trajectory-outer_1920_legacy/progress-00050.json": "2372286c283ecbd862f85c6f63fcf81c837a762ce8fffe442144d19bc56a1d68",
+    "long-trajectory-outer_1920_legacy/progress-00100.json": "ab3fd668776d70655ad705b69ebc1c53dc49d4c468ac29bb394a5a3bd0aeba09",
+    "long-trajectory-outer_1920_legacy/progress-00150.json": "ef08bc15b2e9ad8b9b99f4f93d495abb3a32858d4fba078aadb1d8f30c1e031d",
+    "long-trajectory-outer_1920_legacy/progress-00200.json": "2f825874053ac73ae7bf0cb1932c238c9240237c0bf23ad46acb49e7dc8506a6",
+    "long-trajectory-outer_1920_legacy/progress-00250.json": "af07618241219bcf18aa917f173317166bbbbc3b2960cec16d45c8722e6d357d",
+    "long-trajectory-outer_1920_legacy/progress-00300.json": "33bc81f2ea0a2a7510dfa96ffefea081731dd85544cd0b6f8cb363dbc245c860",
+    "saved-baseline/summary.json": "b8f033e6f316adf3e55ecf59f1f0c4292e7dd0e45ece6109dfc6e18b95362834",
+    "saved-outer_1920_legacy/cadence-summary.json": "2c9cb3c5523dedcd6fdbaf35bbd8131f51d6168d88e504faa12e7561449cc4a8",
+    "saved-outer_1920_legacy/work-1.json": "e1768f70caa9245ebc9f84c4b21bea9e447a1af2fcdb0b7b372163dc7d7e075d",
+    "saved-outer_1920_legacy/work-2.json": "a94a8445e2c12b22a610d772913dfe035569f5f0ea57cc2788e4b0ea88c62e29",
+    "saved-outer_1920_legacy/work-3.json": "86a2f07f26453bb04171e45f52990f514f39d2ed1cb3f972436460c5ab995399",
+    "saved-outer_1920_legacy/work-4.json": "7e12a95240a46bc97df561b6bb940c4c1fa3911e4cc96775d7cfc723aff091d2",
+    "saved-outer_1920_material/cadence-summary.json": "b122f56d4b09294ee286e8ecdbfce2b9564481139192a023bb171eaa50565c6a",
+    "saved-outer_1920_material/work-1.json": "51a7b77102806d6f897c8468b990504c727c725846611a6f4306e34fdb24800b",
+    "saved-outer_1920_material/work-2.json": "381b5cc9aba79f8ee5d4a808451ce846ca2262938ba92530b978fa8a4d4b770e",
+    "saved-outer_1920_material/work-3.json": "8122593378bcf30b5d3770dcd9142fb53fdb3d001dac7efaebc31ce42bbe3dfd",
+    "saved-outer_1920_material/work-4.json": "afc1f6de9f9a4f11e86daf97b88c89586b677276f4a1078627bffee99676571b",
+    "saved-outer_480_legacy/cadence-summary.json": "022b4d6c3014b254f020ae8d9ea14a14b49d07ca8387d183cb9586e49c64aa2c",
+    "saved-outer_480_legacy/work-1.json": "ba08dadb749b348e694c2ac0911d8453026f640b2ede985cf464b822d8b64648",
+    "saved-outer_480_material/cadence-summary.json": "d72a06023a714376a8c183cc077619e2d8abc8db9065154313b006c4ad644dc0",
+    "saved-outer_480_material/work-1.json": "2323a79bfceb9a63653bed3147810a615b55274a7eba3d513b959a3f01c8d559",
+    "trajectory-outer_1920_material/cadence-summary.json": "080af5dab37ae8e92ed8ad8cb5e2ad7f49c299b6da1fd4c4b11849c4f4580fad",
+    "trajectory-outer_1920_material/progress-00050.json": "13c83a4d02c6812235885f2d094e173f960dac5014ae548024ce09ddd1c73ad9",
+    "trajectory-outer_1920_material/progress-00100.json": "5a09611753537ab413e07b5d3a6da3b4479ec22dd639bd86f81ff49378d70d97",
+    "trajectory-outer_1920_material/progress-00150.json": "71cef52f6a4d4b781ad98727d4c2e7f7f01bf2ad64b3249392c918f9dd438a86",
+    "trajectory-outer_1920_material/progress-00200.json": "243658e01c1075d3248e1b8f9a99371877cccbeb724da7677cea3242c284092b",
+    "trajectory-outer_1920_material/progress-00250.json": "d855a521d83925c4563fa255c9bd721706e2d78ca768685f8852f679215bd99e",
+    "trajectory-outer_1920_material/progress-00300.json": "d04fed041b4f6ec49d934d28ff3ceba26fbe4a129bf1b69bb84eec5f94fec089",
+    "trajectory-outer_480_legacy/cadence-summary.json": "851beb7f33d72deaafae4280f6555af183f179d12300023457ccbe5e8ff17f17",
+    "trajectory-outer_480_material/cadence-summary.json": "1a6881d2568df5f9debecd473a2679a149b06447b6bfc698add229c434d0ae22",
+    "trajectory-outer_480_material/progress-00050.json": "8f847f3bd58c0c67a724501275cdbd99f767cfc3df2b979b185494ea5b20317e",
+    "trajectory-outer_480_material/progress-00100.json": "d6d9e617d143cf72f89ee6379fad96b36e9ab97cf5faeeac4fbadd800e86c598",
+    "trajectory-outer_480_material/progress-00150.json": "431390c2d1ce8166ddc076e05afb234317bef607d53148f257a18a04e66f803b",
+    "trajectory-outer_480_material/progress-00200.json": "5d8ad8ae18f746f24c853f6d92e5a705d9ab530e241b193b02ba78b44a4b3a9a",
+    "trajectory-outer_480_material/progress-00250.json": "d76c137e850798f232300c3459bcd698cbc07d7b9e7a3e02f7fab786280dd1bb",
+    "trajectory-outer_480_material/progress-00300.json": "7482c768b3c021950101c14f920d15514287e58b13f7e32eafa99f9df34f6598"
+  },
+  "input_sha256": {
+    "worst-before.bin": "7147a81a9830b2d27fcfca6feef4ef419ef8a09fede2899a7ab6e02af7c8db0b",
+    "worst-after.bin": "6f54234a1ed418414b2fd4abb10e8c1614411668c0e8275f21532fe29c4d7dc9"
+  },
+  "new_registered_geometry_outlier": {
+    "case": "trajectory-outer_1920_material",
+    "count": 1,
+    "reason": "SAT boundary support features have no checked tangent-plane intersection",
+    "full_fixture_captured": true,
+    "ordinary_fresh_fallback_retained": true,
+    "artifact": "registered-query-outlier.json",
+    "tracked_artifact": "docs/playtests/2026-10-25-contact-refresh-outlier.json",
+    "sha256": "6ecc13a8da6348aa2691f461919ce8b761da050255ed4bc44c2d2c15adb75556",
+    "causal_energy_effect_proven": false
+  }
+}

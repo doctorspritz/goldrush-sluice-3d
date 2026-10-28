@@ -47,7 +47,7 @@ struct Params {
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read> positions: array<vec3<f32>>;
+@group(0) @binding(1) var<storage, read> positions: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read> velocities: array<vec3<f32>>;
 @group(0) @binding(3) var<storage, read> c_col0: array<vec3<f32>>;
 @group(0) @binding(4) var<storage, read> c_col1: array<vec3<f32>>;
@@ -157,7 +157,7 @@ fn scatter(
         // Find first valid particle to set tile origin
         let first_pid = workgroup_id.x * 256u;
         if (first_pid < params.particle_count) {
-            let pos = positions[first_pid];
+            let pos = positions[first_pid].xyz;
             // Tile origin: align to tile boundaries
             let cell_i = i32(pos.x / params.cell_size);
             let cell_j = i32(pos.y / params.cell_size);
@@ -177,9 +177,10 @@ fn scatter(
 
     // ========== Phase 1: Accumulate particle contributions ==========
     if (pid < params.particle_count) {
-        let pos = positions[pid];
+        let pos = positions[pid].xyz;
         let vel = velocities[pid];
         let density = densities[pid];
+        let mass_weight = density * select(positions[pid].w, 1.0, positions[pid].w <= 0.0);
 
         // Skip sediment if not included
         if (density > 1.0 && params.include_sediment == 0u) {
@@ -227,7 +228,7 @@ fn scatter(
 
             // ========== U component ==========
             let u_pos = pos / cell_size - vec3<f32>(0.0, 0.5, 0.5);
-            let base_u = vec3<i32>(floor(u_pos));
+            let base_u = vec3<i32>(floor(u_pos + vec3<f32>(0.5)));
             let frac_u = u_pos - vec3<f32>(base_u);
 
             let u_wx = array<f32, 3>(
@@ -270,7 +271,7 @@ fn scatter(
                         );
                         let offset = node_pos - pos;
                         let affine_vel = c_mat_mul(pid, offset);
-                        let momentum_x = (vel.x + affine_vel.x) * w;
+                        let momentum_x = (vel.x + affine_vel.x) * w * mass_weight;
 
                         // Check if within tile (U grid extends 1 extra in X)
                         let li = ni - tile_origin.x;
@@ -283,12 +284,12 @@ fn scatter(
                             // Accumulate to shared memory
                             let idx = u_index_tile(u32(li), u32(lj), u32(lk));
                             atomicAdd(&tile_u_sum[idx], i32(momentum_x * SCALE));
-                            atomicAdd(&tile_u_weight[idx], i32(w * SCALE));
+                            atomicAdd(&tile_u_weight[idx], i32(w * mass_weight * SCALE));
                         } else {
                             // Fallback to global
                             let idx = u_index_global(u32(ni), u32(nj), u32(nk));
                             atomicAdd(&u_sum[idx], i32(momentum_x * SCALE));
-                            atomicAdd(&u_weight[idx], i32(w * SCALE));
+                            atomicAdd(&u_weight[idx], i32(w * mass_weight * SCALE));
                         }
                     }
                 }
@@ -296,7 +297,7 @@ fn scatter(
 
             // ========== V component ==========
             let v_pos = pos / cell_size - vec3<f32>(0.5, 0.0, 0.5);
-            let base_v = vec3<i32>(floor(v_pos));
+            let base_v = vec3<i32>(floor(v_pos + vec3<f32>(0.5)));
             let frac_v = v_pos - vec3<f32>(base_v);
 
             let v_wx = array<f32, 3>(
@@ -339,7 +340,7 @@ fn scatter(
                         );
                         let offset = node_pos - pos;
                         let affine_vel = c_mat_mul(pid, offset);
-                        let momentum_y = (vel.y + affine_vel.y) * w;
+                        let momentum_y = (vel.y + affine_vel.y) * w * mass_weight;
 
                         let li = ni - tile_origin.x;
                         let lj = nj - tile_origin.y;
@@ -350,11 +351,11 @@ fn scatter(
                             lk >= 0 && lk < i32(TILE_V_Z)) {
                             let idx = v_index_tile(u32(li), u32(lj), u32(lk));
                             atomicAdd(&tile_v_sum[idx], i32(momentum_y * SCALE));
-                            atomicAdd(&tile_v_weight[idx], i32(w * SCALE));
+                            atomicAdd(&tile_v_weight[idx], i32(w * mass_weight * SCALE));
                         } else {
                             let idx = v_index_global(u32(ni), u32(nj), u32(nk));
                             atomicAdd(&v_sum[idx], i32(momentum_y * SCALE));
-                            atomicAdd(&v_weight[idx], i32(w * SCALE));
+                            atomicAdd(&v_weight[idx], i32(w * mass_weight * SCALE));
                         }
                     }
                 }
@@ -362,7 +363,7 @@ fn scatter(
 
             // ========== W component ==========
             let w_pos = pos / cell_size - vec3<f32>(0.5, 0.5, 0.0);
-            let base_w = vec3<i32>(floor(w_pos));
+            let base_w = vec3<i32>(floor(w_pos + vec3<f32>(0.5)));
             let frac_w = w_pos - vec3<f32>(base_w);
 
             let w_wx = array<f32, 3>(
@@ -405,7 +406,7 @@ fn scatter(
                         );
                         let offset = node_pos - pos;
                         let affine_vel = c_mat_mul(pid, offset);
-                        let momentum_z = (vel.z + affine_vel.z) * w;
+                        let momentum_z = (vel.z + affine_vel.z) * w * mass_weight;
 
                         let li = ni - tile_origin.x;
                         let lj = nj - tile_origin.y;
@@ -416,11 +417,11 @@ fn scatter(
                             lk >= 0 && lk < i32(TILE_W_Z)) {
                             let idx = w_index_tile(u32(li), u32(lj), u32(lk));
                             atomicAdd(&tile_w_sum[idx], i32(momentum_z * SCALE));
-                            atomicAdd(&tile_w_weight[idx], i32(w * SCALE));
+                            atomicAdd(&tile_w_weight[idx], i32(w * mass_weight * SCALE));
                         } else {
                             let idx = w_index_global(u32(ni), u32(nj), u32(nk));
                             atomicAdd(&w_sum[idx], i32(momentum_z * SCALE));
-                            atomicAdd(&w_weight[idx], i32(w * SCALE));
+                            atomicAdd(&w_weight[idx], i32(w * mass_weight * SCALE));
                         }
                     }
                 }

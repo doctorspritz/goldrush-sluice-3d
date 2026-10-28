@@ -17,7 +17,7 @@ struct Params {
     omega: f32,  // SOR relaxation factor (typically 1.5-1.9 for 3D)
     h_sq: f32,   // cell_size^2, needed to scale divergence in Poisson equation
     open_boundaries: u32,  // Bitmask: 1=-X, 2=+X, 4=-Y, 8=+Y, 16=-Z, 32=+Z
-    _pad0: u32,
+    phase_omega: f32, // weighted mixed-boundary convergence estimate
     _pad1: u32,
 }
 
@@ -25,7 +25,9 @@ struct Params {
 @group(0) @binding(1) var<storage, read> divergence: array<f32>;
 @group(0) @binding(2) var<storage, read> cell_type: array<u32>;
 @group(0) @binding(3) var<uniform> params: Params;
-
+@group(0) @binding(5) var<storage,read> mobility_u:array<f32>;
+@group(0) @binding(6) var<storage,read> mobility_v:array<f32>;
+@group(0) @binding(7) var<storage,read> mobility_w:array<f32>;
 // Cell type constants (matching sluice_3d_visual convention)
 const CELL_AIR: u32 = 0u;
 const CELL_FLUID: u32 = 1u;
@@ -77,8 +79,7 @@ fn get_neighbor_pressure(ni: u32, nj: u32, nk: u32, current_p: f32) -> f32 {
 }
 
 // Process "red" cells: (i + j + k) % 2 == 0
-@compute @workgroup_size(8, 8, 4)
-fn pressure_red(@builtin(global_invocation_id) id: vec3<u32>) {
+fn solve_red(id: vec3<u32>) {
     let i = id.x;
     let j = id.y;
     let k = id.z;
@@ -98,6 +99,8 @@ fn pressure_red(@builtin(global_invocation_id) id: vec3<u32>) {
     if (cell_type[idx] != CELL_FLUID) {
         return;
     }
+
+    if PERIODIC_Z || variable_mobility() {solve_weighted(id,neighbour_mask(id));return;}
 
     let p = pressure[idx];
 
@@ -180,8 +183,7 @@ fn pressure_red(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 // Process "black" cells: (i + j + k) % 2 == 1
-@compute @workgroup_size(8, 8, 4)
-fn pressure_black(@builtin(global_invocation_id) id: vec3<u32>) {
+fn solve_black(id: vec3<u32>) {
     let i = id.x;
     let j = id.y;
     let k = id.z;
@@ -200,6 +202,8 @@ fn pressure_black(@builtin(global_invocation_id) id: vec3<u32>) {
     if (cell_type[idx] != CELL_FLUID) {
         return;
     }
+
+    if PERIODIC_Z || variable_mobility() {solve_weighted(id,neighbour_mask(id));return;}
 
     let p = pressure[idx];
 
@@ -307,3 +311,146 @@ fn compute_divergence(@builtin(global_invocation_id) id: vec3<u32>) {
 //
 // Note: This requires separate entry points for U, V, W grids since they
 // have different staggered layouts. See apply_pressure_gradient_*.wgsl
+
+@compute @workgroup_size(8,8,4)
+fn pressure_red(@builtin(global_invocation_id) id:vec3<u32>) {solve_red(id);}
+@compute @workgroup_size(8,8,4)
+fn pressure_black(@builtin(global_invocation_id) id:vec3<u32>) {solve_black(id);}
+// Compact the checkerboard's X coordinate without an index buffer or indirect
+// dispatch. Every original cell is visited in the same red/black sweep.
+@compute @workgroup_size(32,2,2)
+fn pressure_red_packed(@builtin(global_invocation_id) id:vec3<u32>) {
+ solve_red(vec3(id.x*2u+((id.y+id.z)&1u),id.y,id.z));
+}
+@compute @workgroup_size(32,2,2)
+fn pressure_black_packed(@builtin(global_invocation_id) id:vec3<u32>) {
+ solve_black(vec3(id.x*2u+((id.y+id.z+1u)&1u),id.y,id.z));
+}
+
+// Neighbour types are constant during all sweeps of a pressure solve. Cache
+// their boundary interpretation once, while preserving the six-term sum order.
+@group(0) @binding(4) var<storage,read_write> stencil: array<u32>;
+fn neighbour_code(q: vec3<i32>, boundary: u32) -> u32 {
+    var wrapped=q;
+    if PERIODIC_Z {let n=i32(params.depth);wrapped.z=((q.z%n)+n)%n;}
+    if any(wrapped < vec3(0)) || any(wrapped >= vec3<i32>(i32(params.width),i32(params.height),i32(params.depth))) {
+        return select(2u,0u,(params.open_boundaries & boundary)!=0u);
+    }
+    let ct=cell_type[get_index(u32(wrapped.x),u32(wrapped.y),u32(wrapped.z))];
+    return select(select(0u,1u,ct==CELL_FLUID),2u,ct==CELL_SOLID);
+}
+@compute @workgroup_size(8,8,4)
+fn prepare_stencil(@builtin(global_invocation_id) id:vec3<u32>) {
+    if !is_valid(id.x,id.y,id.z) {return;}
+    let idx=get_index(id.x,id.y,id.z);
+    if cell_type[idx]!=CELL_FLUID {stencil[idx]=0u;return;}
+    stencil[idx]=neighbour_mask(id);
+}
+fn stencil_pressure(code:u32,idx:u32,p:f32)->f32 {
+    if code==1u {return pressure[idx];}
+    if code==2u {return p;}
+    return 0.;
+}
+fn solve_stencil(id:vec3<u32>) {
+    if !is_valid(id.x,id.y,id.z) {return;}
+    let idx=get_index(id.x,id.y,id.z);
+    let mask=stencil[idx];
+    if (mask&0x80000000u)==0u {return;}
+    if PERIODIC_Z || variable_mobility() {solve_weighted(id,mask);return;}
+    let p=pressure[idx];
+    var sum=0.;
+    sum+=stencil_pressure(mask&3u,idx-1u,p);
+    sum+=stencil_pressure((mask>>2u)&3u,idx+1u,p);
+    sum+=stencil_pressure((mask>>4u)&3u,idx-params.width,p);
+    sum+=stencil_pressure((mask>>6u)&3u,idx+params.width,p);
+    sum+=stencil_pressure((mask>>8u)&3u,idx-params.width*params.height,p);
+    sum+=stencil_pressure((mask>>10u)&3u,idx+params.width*params.height,p);
+    let new_p=(sum-divergence[idx]*params.h_sq)/6.;
+    pressure[idx]=mix(pressure[idx],new_p,params.omega);
+}
+@compute @workgroup_size(32,2,2)
+fn pressure_red_stencil(@builtin(global_invocation_id) id:vec3<u32>) {
+    solve_stencil(vec3(id.x*2u+((id.y+id.z)&1u),id.y,id.z));
+}
+@compute @workgroup_size(32,2,2)
+fn pressure_black_stencil(@builtin(global_invocation_id) id:vec3<u32>) {
+    solve_stencil(vec3(id.x*2u+((id.y+id.z+1u)&1u),id.y,id.z));
+}
+
+fn neighbour_mask(id:vec3<u32>)->u32 {
+    let p=vec3<i32>(id);
+    return 0x80000000u
+        | neighbour_code(p+vec3(-1,0,0),1u)
+        | (neighbour_code(p+vec3(1,0,0),2u)<<2u)
+        | (neighbour_code(p+vec3(0,-1,0),4u)<<4u)
+        | (neighbour_code(p+vec3(0,1,0),8u)<<6u)
+        | (neighbour_code(p+vec3(0,0,-1),16u)<<8u)
+        | (neighbour_code(p+vec3(0,0,1),32u)<<10u);
+}
+// Canonical neighbouring cells. Invalid X/Y indices remain unreachable through
+// their boundary mask; periodic Z always addresses an actual opposite-edge cell.
+fn z_neighbours(id:vec3<u32>)->vec2<u32> {
+    let idx=get_index(id.x,id.y,id.z);let plane=params.width*params.height;
+    if PERIODIC_Z {
+        return vec2(get_index(id.x,id.y,(id.z+params.depth-1u)%params.depth),
+                    get_index(id.x,id.y,(id.z+1u)%params.depth));
+    }
+    return vec2(idx-plane,idx+plane);
+}
+fn solve_weighted(id:vec3<u32>,mask:u32) {
+    let idx=get_index(id.x,id.y,id.z);
+    let p=pressure[idx];
+    let nu=(params.width+1u)*params.height;
+    let ui=id.z*nu+id.y*(params.width+1u)+id.x;
+    let vi=id.z*params.width*(params.height+1u)+id.y*params.width+id.x;
+    let wi=idx;
+    // The same fixed neighbour summation order is used by every dispatch.
+    var terms=weighted_term(mask&3u,idx-1u,face_mobility(0u,ui),p);
+    terms+=weighted_term((mask>>2u)&3u,idx+1u,face_mobility(0u,ui+1u),p);
+    terms+=weighted_term((mask>>4u)&3u,idx-params.width,face_mobility(1u,vi),p);
+    terms+=weighted_term((mask>>6u)&3u,idx+params.width,face_mobility(1u,vi+params.width),p);
+    terms+=weighted_term((mask>>8u)&3u,z_neighbours(id).x,face_mobility(2u,wi),p);
+    terms+=weighted_term((mask>>10u)&3u,z_neighbours(id).y,face_mobility(2u,wi+params.width*params.height),p);
+    let diagonal=terms.x;let sum=terms.y;
+    if diagonal<=0. {pressure[idx]=0.;return;}
+    // Correct the face-flux residual directly. Forming a new absolute
+    // pressure and subtracting it again magnifies roundoff on a large gauge
+    // or nearly hydrostatic column. The represented operator is unchanged.
+    let correction=(sum-divergence[idx]*params.h_sq)/diagonal;
+    pressure[idx]=p+params.phase_omega*correction;
+}
+
+fn weighted_term(code:u32,neighbour:u32,coefficient:f32,p:f32)->vec2<f32> {
+    if code==2u {return vec2(0.);}
+    if code==1u {return vec2(coefficient,coefficient*(pressure[neighbour]-p));}
+    return vec2(coefficient,-coefficient*p);
+}
+
+// Opt-in diagnostic entry only. Other entry points never bind or allocate it.
+@group(1) @binding(0) var<storage,read_write> residual_output:array<vec4<f32>>;
+@compute @workgroup_size(8,8,4)
+fn measure_residual(@builtin(global_invocation_id) id:vec3<u32>) {
+    if !is_valid(id.x,id.y,id.z) {return;}
+    let idx=get_index(id.x,id.y,id.z);
+    if cell_type[idx]!=CELL_FLUID {residual_output[idx]=vec4(0.);return;}
+    let mask=neighbour_mask(id);let p=pressure[idx];
+    let ui=id.z*(params.width+1u)*params.height+id.y*(params.width+1u)+id.x;
+    let vi=id.z*params.width*(params.height+1u)+id.y*params.width+id.x;
+    let neighbours=array(idx-1u,idx+1u,idx-params.width,idx+params.width,
+                          z_neighbours(id).x,z_neighbours(id).y);
+    let coefficients=array(face_mobility(0u,ui),face_mobility(0u,ui+1u),
+                           face_mobility(1u,vi),face_mobility(1u,vi+params.width),
+                           face_mobility(2u,idx),face_mobility(2u,idx+params.width*params.height));
+    var applied=0.;var scale=0.;
+    for(var face=0u;face<6u;face++) {
+        let code=(mask>>(2u*face))&3u;
+        if code==2u {continue;}
+        var q=0.;if code==1u {q=pressure[neighbours[face]];}
+        let a=coefficients[face];
+        // Face differences avoid cancellation from subtracting two large
+        // diagonal sums and agree with the pressure-gradient flux operator.
+        applied+=a*(p-q);scale+=abs(a)*(abs(p)+abs(q));
+    }
+    let b = -divergence[idx]*params.h_sq;
+    residual_output[idx]=vec4(b-applied,b,scale+abs(b),1.);
+}

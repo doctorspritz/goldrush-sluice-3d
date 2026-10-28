@@ -218,7 +218,7 @@ fn sediment_advects_downstream_on_slope() {
     let mut sim = GpuFlip3D::new(&device, width, height, depth, cell_size, max_particles);
     sim.vorticity_epsilon = 0.0;
     sim.open_boundaries = 2; // +X open so flow can carry sediment out the downstream end
-    // settling left at default (ON): sim.sediment_settling_velocity defaults to 0.05
+                             // settling left at default (ON): sim.sediment_settling_velocity defaults to 0.05
 
     // Sloped solid floor (descends toward +X), plus +Z/-Z walls, like the chained-grid harness.
     let mut cell_types = vec![CELL_FLUID; (width * height * depth) as usize];
@@ -361,7 +361,7 @@ fn dense_sediment_settles_below_water() {
     let height = 16u32;
     let depth = 10u32;
     let cell_size = 0.05f32;
-    let max_particles = 8192usize;
+    let max_particles = 32768usize;
 
     let mut sim = GpuFlip3D::new(&device, width, height, depth, cell_size, max_particles);
     sim.vorticity_epsilon = 0.0;
@@ -376,26 +376,46 @@ fn dense_sediment_settles_below_water() {
     let mut dense_indices = Vec::new();
     let mut light_indices = Vec::new();
 
-    // Interleaved mixed cloud in a mid-column bounding box, zero initial velocity.
+    // Settling requires a continuous water column. A sparse mixed cloud in
+    // otherwise empty space tests falling through air; its water reaches the
+    // floor before a submerged terminal-speed particle and reverses the claim.
+    // Fill the box at the original solver's 8 water particles per cell. Track
+    // water tracers at the same initial heights as the sediment sample.
+    for x in 1..width - 1 {
+        for y in 1..height - 1 {
+            for z in 1..depth - 1 {
+                for ox in [0.25, 0.75] {
+                    for oy in [0.25, 0.75] {
+                        for oz in [0.25, 0.75] {
+                            positions.push(Vec3::new(
+                                (x as f32 + ox) * cell_size,
+                                (y as f32 + oy) * cell_size,
+                                (z as f32 + oz) * cell_size,
+                            ));
+                            velocities.push(Vec3::ZERO);
+                            c_matrices.push(Mat3::ZERO);
+                            densities.push(1.0);
+                            if (6..14).contains(&x) && (6..11).contains(&y) && (3..7).contains(&z) {
+                                light_indices.push(positions.len() - 1);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     for x in 6..14 {
         for y in 6..11 {
             for z in 3..7 {
-                let pos = Vec3::new(
+                positions.push(Vec3::new(
                     (x as f32 + 0.5) * cell_size,
                     (y as f32 + 0.5) * cell_size,
                     (z as f32 + 0.5) * cell_size,
-                );
-                positions.push(pos);
+                ));
                 velocities.push(Vec3::ZERO);
                 c_matrices.push(Mat3::ZERO);
-                // Interleave dense/light by parity of the cell sum.
-                if (x + y + z) % 2 == 0 {
-                    densities.push(2.65);
-                    dense_indices.push(positions.len() - 1);
-                } else {
-                    densities.push(1.0);
-                    light_indices.push(positions.len() - 1);
-                }
+                densities.push(2.65);
+                dense_indices.push(positions.len() - 1);
             }
         }
     }
@@ -458,8 +478,9 @@ fn dense_sediment_settles_below_water() {
 /// gold (>= the gold_density_threshold, 10.0 per flip_3d.rs) particles, three-way
 /// interleaved at the SAME heights with zero initial velocity, runs with settling ON.
 ///
-/// Physical basis: the buoyancy impulse in g2p_3d.wgsl is `(1.0 - density) * gravity * dt`,
-/// so gold (rel. density >= 10 -> ~ -9*g) sinks fastest, then sand (~ -1.65*g), then
+/// Physical basis: submerged gravity is `g * (1 - 1/density)` and the
+/// prescribed terminal slips are integrated with exact drag relaxation. Gold
+/// has a larger terminal slip than sand; both sink relative to
 /// water-like (~0). The ordering gold < sand < light therefore holds DURING the fall.
 ///
 /// === MEASURED PHYSICS FINDING (this build, this GPU) ===
@@ -610,20 +631,29 @@ fn gold_settles_below_sand() {
         .fold(f32::INFINITY, f32::min);
 
     let max_of = |idxs: &[usize]| -> f32 {
-        idxs.iter().map(|&i| positions[i].y).fold(f32::NEG_INFINITY, f32::max)
+        idxs.iter()
+            .map(|&i| positions[i].y)
+            .fold(f32::NEG_INFINITY, f32::max)
     };
     let min_of = |idxs: &[usize]| -> f32 {
-        idxs.iter().map(|&i| positions[i].y).fold(f32::INFINITY, f32::min)
+        idxs.iter()
+            .map(|&i| positions[i].y)
+            .fold(f32::INFINITY, f32::min)
     };
     println!(
         "stratification (settled): avg_y_gold={avg_y_gold:.4} avg_y_sand={avg_y_sand:.4} avg_y_light={avg_y_light:.4} min_gold_y={min_gold_y:.4} cell={cell_size}"
     );
     println!(
         "ranges: gold[{:.4},{:.4}] sand[{:.4},{:.4}] light[{:.4},{:.4}] counts g={} s={} l={}",
-        min_of(&gold_indices), max_of(&gold_indices),
-        min_of(&sand_indices), max_of(&sand_indices),
-        min_of(&light_indices), max_of(&light_indices),
-        gold_indices.len(), sand_indices.len(), light_indices.len()
+        min_of(&gold_indices),
+        max_of(&gold_indices),
+        min_of(&sand_indices),
+        max_of(&sand_indices),
+        min_of(&light_indices),
+        max_of(&light_indices),
+        gold_indices.len(),
+        sand_indices.len(),
+        light_indices.len()
     );
     println!(
         "peak fall-time gold-below-sand separation = {best_gold_sand_sep:.4} (0.5*cell = {:.4})",

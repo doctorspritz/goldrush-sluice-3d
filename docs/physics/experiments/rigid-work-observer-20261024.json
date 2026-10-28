@@ -1,0 +1,40 @@
+{
+  "base_commit": "2e1b29dcf0626ee905a28a0af5ab3dd45a33ad39",
+  "patch": "docs/physics/experiments/rigid-work-observer-20261024.patch",
+  "patch_sha256": "15131f40e2fa804395fd99b1d8021515ea6e802d6124c4fb83ead9cc6b6d0f7b",
+  "source_sha256": {
+    "vendor/rapier3d/src/dynamics/solver/contact_constraint/contact_with_coulomb_friction.rs": "5a1800e03fd65e5db191205992fef6353bacbfa33206b19f1375ee78471d6a73",
+    "vendor/rapier3d/src/dynamics/solver/contact_work_audit.rs": "d8d076bbf6901a3a53de999e4910373c71cf6dbe10d5eaedb325a08eb479b003",
+    "vendor/rapier3d/src/dynamics/solver/manifold_store.rs": "1c085ae128fd93913830799c0991309f000e5dd8cd234c5305a8eca6672ecdab",
+    "vendor/rapier3d/src/dynamics/solver/staged_island_solver/mod.rs": "9d6e4cd5e9f24dc24565cab513a6a13f5cb681403421aed4ec7e981842852622",
+    "vendor/rapier3d/src/dynamics/solver/staged_island_solver/solve.rs": "f417185a4a50a0888029006473baec82754cd7f6c295d0dc9e5e92ea2c3f5bf5",
+    "vendor/rapier3d/src/dynamics/solver/staged_island_solver/worker.rs": "f7cc9fef8f5407fc832072fd6f5ab41f7ddf57d1e8fb5fe430fb9d55ceb072c6",
+    "crates/mining-sim/src/articulation/retained/tests/rigid_geometry.rs": "67f2ffe1c77b547e2b0c91d906a21eafe29d01e164e41a96b22b87837851b12c",
+    "vendor/rapier3d/src/dynamics/solver/contact_constraint/rigid_anchor_objectivity.rs": "453402ab78f5678e11d608baa071a79606e33217403ae5064aac3b1d57c6e782",
+    "vendor/rapier3d/src/dynamics/solver/contact_work_audit/rigid_work.rs": "f3ce03c9b7166cede455e081eb2dabceae2b7bc22651e03c61c27e68b15405d5"
+  },
+  "tracked_paths_restored": [
+    "vendor/rapier3d/src/dynamics/solver/contact_constraint/contact_with_coulomb_friction.rs",
+    "vendor/rapier3d/src/dynamics/solver/contact_work_audit.rs",
+    "vendor/rapier3d/src/dynamics/solver/manifold_store.rs",
+    "vendor/rapier3d/src/dynamics/solver/staged_island_solver/mod.rs",
+    "vendor/rapier3d/src/dynamics/solver/staged_island_solver/solve.rs",
+    "vendor/rapier3d/src/dynamics/solver/staged_island_solver/worker.rs"
+  ],
+  "new_paths_preserved_then_removed_from_runtime_tree": [
+    "crates/mining-sim/src/articulation/retained/tests/rigid_geometry.rs",
+    "vendor/rapier3d/src/dynamics/solver/contact_constraint/rigid_anchor_objectivity.rs",
+    "vendor/rapier3d/src/dynamics/solver/contact_work_audit/rigid_work.rs"
+  ],
+  "observer_compilation_and_runtime_verification": "unrun",
+  "geometry_fixture_compilation_and_tests": "unrun",
+  "anchor_negative_control_result": {
+    "passed": 2,
+    "failed": 2,
+    "adopted_fix": false
+  },
+  "active_solver_policy_changed": false,
+  "patch_format": "zero context; apply only on exact base with git apply --unidiff-zero",
+  "raw_negative_control_log_sha256": "6612663ed93dc937d0cd9ab3749ed2696bb5679b520958c46e562bc621ef8ca6",
+  "tracked_negative_control_transcript": "Complete text with trailing line whitespace removed; raw log remains in task artifacts."
+}

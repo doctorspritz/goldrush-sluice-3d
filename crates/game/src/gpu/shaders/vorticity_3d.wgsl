@@ -1,3 +1,4 @@
+override PERIODIC_Z: bool = false;
 // 3D Vorticity (Curl) computation
 //
 // Computes omega = curl(v) from staggered MAC grid velocities.
@@ -25,19 +26,36 @@ const CELL_FLUID: u32 = 1u;
 const CELL_SOLID: u32 = 2u;
 
 fn cell_index(i: u32, j: u32, k: u32) -> u32 {
-    return i + j * params.width + k * params.width * params.height;
+    return i + j * params.width + periodic_k(k) * params.width * params.height;
 }
 
 fn u_index(i: u32, j: u32, k: u32) -> u32 {
-    return i + j * (params.width + 1u) + k * (params.width + 1u) * params.height;
+    return i + j * (params.width + 1u) + periodic_k(k) * (params.width + 1u) * params.height;
 }
 
 fn v_index(i: u32, j: u32, k: u32) -> u32 {
-    return i + j * params.width + k * params.width * (params.height + 1u);
+    return i + j * params.width + periodic_k(k) * params.width * (params.height + 1u);
 }
 
 fn w_index(i: u32, j: u32, k: u32) -> u32 {
-    return i + j * params.width + k * params.width * params.height;
+    return i + j * params.width + periodic_k(k) * params.width * params.height;
+}
+
+fn periodic_k(k: u32) -> u32 {
+    if PERIODIC_Z { return k % params.depth; }
+    return k;
+}
+fn previous_k(k: u32) -> u32 {
+    if PERIODIC_Z { return (k + params.depth - 1u) % params.depth; }
+    return k - 1u;
+}
+// Collocate MAC components before evaluating the periodic cell-centred curl.
+// Ordinary mode retains its historical operator for reference comparisons.
+fn centered_velocity(i: u32, j: u32, k: u32) -> vec3<f32> {
+    return 0.5 * vec3(
+        grid_u[u_index(i,j,k)] + grid_u[u_index(i+1u,j,k)],
+        grid_v[v_index(i,j,k)] + grid_v[v_index(i,j+1u,k)],
+        grid_w[w_index(i,j,k)] + grid_w[w_index(i,j,k+1u)]);
 }
 
 @compute @workgroup_size(8, 8, 4)
@@ -54,7 +72,7 @@ fn compute_vorticity(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     if (i < 1u || i >= params.width - 1u ||
         j < 1u || j >= params.height - 1u ||
-        k < 1u || k >= params.depth - 1u) {
+        (!PERIODIC_Z && (k < 1u || k >= params.depth - 1u))) {
         vort_x[idx] = 0.0;
         vort_y[idx] = 0.0;
         vort_z[idx] = 0.0;
@@ -71,14 +89,24 @@ fn compute_vorticity(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let inv_2h = 0.5 / params.value;
+    if PERIODIC_Z {
+        let dx = (centered_velocity(i+1u,j,k)-centered_velocity(i-1u,j,k))*inv_2h;
+        let dy = (centered_velocity(i,j+1u,k)-centered_velocity(i,j-1u,k))*inv_2h;
+        let dz = (centered_velocity(i,j,k+1u)-centered_velocity(i,j,previous_k(k)))*inv_2h;
+        let omega = vec3(dy.z-dz.y, dz.x-dx.z, dx.y-dy.x);
+        vort_x[idx]=omega.x; vort_y[idx]=omega.y; vort_z[idx]=omega.z;
+        vort_mag[idx]=length(omega);
+        return;
+    }
+
 
     // omega_x = dw/dy - dv/dz
     let dw_dy = (grid_w[w_index(i, j + 1u, k)] - grid_w[w_index(i, j - 1u, k)]) * inv_2h;
-    let dv_dz = (grid_v[v_index(i, j, k + 1u)] - grid_v[v_index(i, j, k - 1u)]) * inv_2h;
+    let dv_dz = (grid_v[v_index(i, j, k + 1u)] - grid_v[v_index(i, j, previous_k(k))]) * inv_2h;
     let omega_x = dw_dy - dv_dz;
 
     // omega_y = du/dz - dw/dx
-    let du_dz = (grid_u[u_index(i, j, k + 1u)] - grid_u[u_index(i, j, k - 1u)]) * inv_2h;
+    let du_dz = (grid_u[u_index(i, j, k + 1u)] - grid_u[u_index(i, j, previous_k(k))]) * inv_2h;
     let dw_dx = (grid_w[w_index(i + 1u, j, k)] - grid_w[w_index(i - 1u, j, k)]) * inv_2h;
     let omega_y = du_dz - dw_dx;
 

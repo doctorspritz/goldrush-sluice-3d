@@ -16,6 +16,9 @@
 // Kernel constants
 const BSPLINE_SUPPORT_RADIUS: f32 = 1.5;  // Support range [-1.5, 1.5] for quadratic B-spline
 const EPSILON_METERS: f32 = 0.001;        // Small epsilon for numerical checks
+override PERIODIC_Z: bool = false;
+override PHASE_EXCHANGE_ALLOWED: bool=false;
+override WATER_SUPPORT_ALLOWED: bool=false;
 const GRAVITY: f32 = 9.81;                // Gravity magnitude (m/s²)
 
 struct Params {
@@ -27,13 +30,16 @@ struct Params {
     d_inv: f32,          // APIC D inverse = 4/dx^2
     flip_ratio: f32,     // FLIP blend ratio (0.97 for water)
     dt: f32,             // Time step for velocity clamping
-    max_velocity: f32,   // Safety clamp (2000.0)
+    max_velocity: f32,   // CFL-derived safety clamp
+    diameter_offset: u32,
+    _pad0: u32,
+    _pad1: u32,
 }
 
 struct SedimentParams {
     settling_velocity: f32,     // How fast sediment falls (m/s)
     friction_threshold: f32,    // Speed below which friction kicks in (m/s)
-    friction_strength: f32,     // How much to damp when slow (0-1 per frame)
+    friction_strength: f32,     // Damping fraction at 60 Hz; converted to exponential decay
     vorticity_lift: f32,        // How much vorticity suspends sediment
     vorticity_threshold: f32,   // Minimum vorticity to lift
     drag_coefficient: f32,      // Rate at which particle approaches water velocity (1/s)
@@ -68,6 +74,7 @@ struct SedimentParams {
 @group(0) @binding(16) var<storage, read> water_grid_v: array<f32>;
 @group(0) @binding(17) var<storage, read> water_grid_w: array<f32>;
 
+
 // Quadratic B-spline kernel (1D)
 fn quadratic_bspline_1d(x: f32) -> f32 {
     let ax = abs(x);
@@ -80,33 +87,74 @@ fn quadratic_bspline_1d(x: f32) -> f32 {
     return 0.0;
 }
 
+// Match canonical P2G faces while retaining unwrapped local stencil offsets.
+fn transfer_z(k: i32) -> u32 {
+    if PERIODIC_Z { return u32(((k % i32(params.depth)) + i32(params.depth)) % i32(params.depth)); }
+    return u32(k);
+}
+
 // Index functions for staggered grids
 fn u_index(i: i32, j: i32, k: i32) -> u32 {
     // U grid: (width+1) x height x depth
-    return u32(k) * (params.width + 1u) * params.height + u32(j) * (params.width + 1u) + u32(i);
+    return transfer_z(k) * (params.width + 1u) * params.height + u32(j) * (params.width + 1u) + u32(i);
 }
 
 fn v_index(i: i32, j: i32, k: i32) -> u32 {
     // V grid: width x (height+1) x depth
-    return u32(k) * params.width * (params.height + 1u) + u32(j) * params.width + u32(i);
+    return transfer_z(k) * params.width * (params.height + 1u) + u32(j) * params.width + u32(i);
 }
 
 fn w_index(i: i32, j: i32, k: i32) -> u32 {
     // W grid: width x height x (depth+1)
-    return u32(k) * params.width * params.height + u32(j) * params.width + u32(i);
+    return transfer_z(k) * params.width * params.height + u32(j) * params.width + u32(i);
 }
 
 fn cell_index(i: i32, j: i32, k: i32) -> u32 {
-    return u32(k) * params.width * params.height + u32(j) * params.width + u32(i);
+    return transfer_z(k) * params.width * params.height + u32(j) * params.width + u32(i);
 }
 
-@compute @workgroup_size(256)
+// Phase buffers retain the legacy pure-water plane before their auxiliary
+// plane. Ordinary callers never access beyond that original plane.
+fn phase_water(axis:u32,index:u32)->f32 {
+    if axis==0u {return water_grid_u[index];}
+    if axis==1u {return water_grid_v[index];}
+    return water_grid_w[index];
+}
+fn phase_face_velocity(axis:u32,index:u32,mixture:f32,predictor:f32,rho:f32,particle:u32)->f32 {
+    var n=(params.width+1u)*params.height*params.depth;
+    if axis==1u {n=params.width*(params.height+1u)*params.depth;}
+    if axis==2u {n=params.width*params.height*(params.depth+1u);}
+    let offset=((n+4u+63u)/64u)*64u+4u*index;
+    let u0=phase_water(axis,offset);let ratio=phase_water(axis,offset+1u);
+    let q0=phase_water(axis,offset+2u);let scale_ratio=phase_water(axis,offset+3u);
+    let dq=mixture-q0;
+    if rho<=1. {return u0+ratio*dq;}
+    let b=densities[2u*params.diameter_offset+particle];
+    let c=densities[3u*params.diameter_offset+particle];
+    if b<0. || scale_ratio==0. {return predictor;}
+    return c*predictor+b*(u0+ratio*dq)+c/rho*scale_ratio*dq;
+}
+
+// Carrier validity comes from actual water P2G weight, not its velocity.
+// A supported stationary face is data; an unsupported face is not a zero flow.
+fn carrier_face_supported(axis:u32,index:u32)->bool {
+    if !WATER_SUPPORT_ALLOWED {return true;}
+    if axis==0u {return water_grid_u[(params.width+1u)*params.height*params.depth+index]>0.;}
+    if axis==1u {return water_grid_v[params.width*(params.height+1u)*params.depth+index]>0.;}
+    return water_grid_w[params.width*params.height*(params.depth+1u)+index]>0.;
+}
+
+@compute @workgroup_size(128)
 fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     if (id.x >= params.particle_count) {
         return;
     }
 
+    let phase=PHASE_EXCHANGE_ALLOWED && params._pad0!=0u;
+    if phase && water_grid_u[(params.width+1u)*params.height*params.depth]!=0. {return;}
     let pos = positions[id.x];
+    var voxel_bounds=VoxelWallBounds(vec3(0),vec3<i32>(i32(params.width),i32(params.height),i32(params.depth)));
+    if phase {voxel_bounds=voxel_wall_bounds(pos);}
     let old_particle_vel = velocities[id.x];
     let cell_size = params.cell_size;
     let density = densities[id.x];
@@ -123,146 +171,180 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     var new_c_row2 = vec3<f32>(0.0, 0.0, 0.0);  // Row 2 of C matrix (from W velocity)
     var weight_sum = vec3<f32>(0.0, 0.0, 0.0);  // u, v, w weight sums
     var water_velocity = vec3<f32>(0.0, 0.0, 0.0);
+    var water_weight_sum = vec3<f32>(0.0, 0.0, 0.0);
 
     // Also sample old grid velocity for FLIP delta
     // NOTE: old and new use same stencil, so weights are identical
     var old_grid_vel = vec3<f32>(0.0, 0.0, 0.0);
+    var old_grid_c0=vec3(0.);var old_grid_c1=vec3(0.);var old_grid_c2=vec3(0.);
 
     // ========== U component (staggered on left YZ faces) ==========
     let u_pos = pos / cell_size - vec3<f32>(0.0, 0.5, 0.5);
-    let base_u = vec3<i32>(floor(u_pos));
+    // The three-node quadratic support is centred on the NEAREST node.
+    // Flooring alone drops a positive-weight node and invents affine motion.
+    let base_u = vec3<i32>(floor(u_pos + vec3<f32>(0.5)));
     let frac_u = u_pos - vec3<f32>(base_u);
 
     for (var dk: i32 = -1; dk <= 1; dk++) {
         let nk = base_u.z + dk;
-        if (nk < 0 || nk >= depth) { continue; }
+        if !phase && !PERIODIC_Z && (nk < 0 || nk >= depth) { continue; }
         let wz = quadratic_bspline_1d(frac_u.z - f32(dk));
 
         for (var dj: i32 = -1; dj <= 1; dj++) {
             let nj = base_u.y + dj;
-            if (nj < 0 || nj >= height) { continue; }
+            if !phase && (nj < 0 || nj >= height) { continue; }
             let wy = quadratic_bspline_1d(frac_u.y - f32(dj));
 
             for (var di: i32 = -1; di <= 1; di++) {
                 let ni = base_u.x + di;
-                if (ni < 0 || ni > width) { continue; }  // U has width+1 columns
+                if !phase && (ni < 0 || ni > width) { continue; }  // U has width+1 columns
 
                 let w = quadratic_bspline_1d(frac_u.x - f32(di)) * wy * wz;
                 if (w <= 0.0) { continue; }
 
-                let idx = u_index(ni, nj, nk);
-                let u_val = grid_u[idx];
-                let u_old = grid_u_old[idx];
-
-                new_velocity.x += w * u_val;
-                old_grid_vel.x += w * u_old;
-                weight_sum.x += w;
-                if (is_sediment) {
-                    let u_water = water_grid_u[idx];
-                    water_velocity.x += w * u_water;
-                }
-
-                // C matrix: row 0 (from U velocity component)
-                // APIC: C[0,:] = Σ w * u * offset * d_inv
+                var reflected=MacWallSample(vec3(ni,nj,nk),1.,true);
+                if phase {reflected=voxel_wall_sample(mac_wall_sample(reflected.node,0u,params._pad1),0u,voxel_bounds);}
+                if !reflected.valid {continue;}
+                let idx = u_index(reflected.node.x, reflected.node.y, reflected.node.z);
                 let offset = vec3<f32>(
                     f32(ni) * cell_size - pos.x,
                     (f32(nj) + 0.5) * cell_size - pos.y,
                     (f32(nk) + 0.5) * cell_size - pos.z
                 );
-                new_c_row0 += offset * (w * u_val * d_inv);
+                var u_val = grid_u[idx];
+                var u_old = grid_u_old[idx];
+                if phase {
+                    let body=select(0.,-sediment_params.gravity*params.dt,0u==1u);
+                    let predictor=old_particle_vel.x+dot(c_col0[id.x],offset)+body;
+                    u_val=reflected.sign*phase_face_velocity(0u,idx,u_val,predictor*reflected.sign,density,id.x);
+                    u_old=reflected.sign*phase_water(0u,idx);
+                }
+                new_velocity.x += w * u_val;
+                old_grid_vel.x += w * u_old;
+                weight_sum.x += w;
+                if is_sediment && !phase && carrier_face_supported(0u,idx) {
+                    water_velocity.x += w * water_grid_u[idx];
+                    water_weight_sum.x += w;
+                }
+                // Use the same local reference in both affine sums. A constant
+                // velocity cancels analytically; centering avoids amplifying its
+                // floating point first-moment residue by 4/h^2 at walls.
+                let affine_reference=select(0.,old_particle_vel.x,phase && !is_sediment);
+                new_c_row0 += offset * (w * (u_val-affine_reference) * d_inv);
+                if phase && !is_sediment {old_grid_c0 += offset * (w * (u_old-old_particle_vel.x) * d_inv);}
             }
         }
     }
 
     // ========== V component (staggered on bottom XZ faces) ==========
     let v_pos = pos / cell_size - vec3<f32>(0.5, 0.0, 0.5);
-    let base_v = vec3<i32>(floor(v_pos));
+    let base_v = vec3<i32>(floor(v_pos + vec3<f32>(0.5)));
     let frac_v = v_pos - vec3<f32>(base_v);
 
     for (var dk: i32 = -1; dk <= 1; dk++) {
         let nk = base_v.z + dk;
-        if (nk < 0 || nk >= depth) { continue; }
+        if !phase && !PERIODIC_Z && (nk < 0 || nk >= depth) { continue; }
         let wz = quadratic_bspline_1d(frac_v.z - f32(dk));
 
         for (var dj: i32 = -1; dj <= 1; dj++) {
             let nj = base_v.y + dj;
-            if (nj < 0 || nj > height) { continue; }  // V has height+1 rows
+            if !phase && (nj < 0 || nj > height) { continue; }  // V has height+1 rows
 
             let wy = quadratic_bspline_1d(frac_v.y - f32(dj));
 
             for (var di: i32 = -1; di <= 1; di++) {
                 let ni = base_v.x + di;
-                if (ni < 0 || ni >= width) { continue; }
+                if !phase && (ni < 0 || ni >= width) { continue; }
 
                 let w = quadratic_bspline_1d(frac_v.x - f32(di)) * wy * wz;
                 if (w <= 0.0) { continue; }
 
-                let idx = v_index(ni, nj, nk);
-                let v_val = grid_v[idx];
-                let v_old = grid_v_old[idx];
-
-                new_velocity.y += w * v_val;
-                old_grid_vel.y += w * v_old;
-                weight_sum.y += w;
-                if (is_sediment) {
-                    let v_water = water_grid_v[idx];
-                    water_velocity.y += w * v_water;
-                }
-
-                // C matrix: row 1 (from V velocity component)
-                // APIC: C[1,:] = Σ w * v * offset * d_inv
+                var reflected=MacWallSample(vec3(ni,nj,nk),1.,true);
+                if phase {reflected=voxel_wall_sample(mac_wall_sample(reflected.node,1u,params._pad1),1u,voxel_bounds);}
+                if !reflected.valid {continue;}
+                let idx = v_index(reflected.node.x, reflected.node.y, reflected.node.z);
                 let offset = vec3<f32>(
                     (f32(ni) + 0.5) * cell_size - pos.x,
                     f32(nj) * cell_size - pos.y,
                     (f32(nk) + 0.5) * cell_size - pos.z
                 );
-                new_c_row1 += offset * (w * v_val * d_inv);
+                var v_val = grid_v[idx];
+                var v_old = grid_v_old[idx];
+                if phase {
+                    let body=select(0.,-sediment_params.gravity*params.dt,1u==1u);
+                    let predictor=old_particle_vel.y+dot(c_col1[id.x],offset)+body;
+                    v_val=reflected.sign*phase_face_velocity(1u,idx,v_val,predictor*reflected.sign,density,id.x);
+                    v_old=reflected.sign*phase_water(1u,idx);
+                }
+                new_velocity.y += w * v_val;
+                old_grid_vel.y += w * v_old;
+                weight_sum.y += w;
+                if is_sediment && !phase && carrier_face_supported(1u,idx) {
+                    water_velocity.y += w * water_grid_v[idx];
+                    water_weight_sum.y += w;
+                }
+                // Use the same local reference in both affine sums. A constant
+                // velocity cancels analytically; centering avoids amplifying its
+                // floating point first-moment residue by 4/h^2 at walls.
+                let affine_reference=select(0.,old_particle_vel.y,phase && !is_sediment);
+                new_c_row1 += offset * (w * (v_val-affine_reference) * d_inv);
+                if phase && !is_sediment {old_grid_c1 += offset * (w * (v_old-old_particle_vel.y) * d_inv);}
             }
         }
     }
 
     // ========== W component (staggered on back XY faces) ==========
     let w_pos = pos / cell_size - vec3<f32>(0.5, 0.5, 0.0);
-    let base_w = vec3<i32>(floor(w_pos));
+    let base_w = vec3<i32>(floor(w_pos + vec3<f32>(0.5)));
     let frac_w = w_pos - vec3<f32>(base_w);
 
     for (var dk: i32 = -1; dk <= 1; dk++) {
         let nk = base_w.z + dk;
-        if (nk < 0 || nk > depth) { continue; }  // W has depth+1 layers
+        if !phase && !PERIODIC_Z && (nk < 0 || nk > depth) { continue; }  // W has depth+1 layers
         let wz = quadratic_bspline_1d(frac_w.z - f32(dk));
 
         for (var dj: i32 = -1; dj <= 1; dj++) {
             let nj = base_w.y + dj;
-            if (nj < 0 || nj >= height) { continue; }
+            if !phase && (nj < 0 || nj >= height) { continue; }
             let wy = quadratic_bspline_1d(frac_w.y - f32(dj));
 
             for (var di: i32 = -1; di <= 1; di++) {
                 let ni = base_w.x + di;
-                if (ni < 0 || ni >= width) { continue; }
+                if !phase && (ni < 0 || ni >= width) { continue; }
 
                 let w = quadratic_bspline_1d(frac_w.x - f32(di)) * wy * wz;
                 if (w <= 0.0) { continue; }
 
-                let idx = w_index(ni, nj, nk);
-                let w_val = grid_w[idx];
-                let w_old = grid_w_old[idx];
-
-                new_velocity.z += w * w_val;
-                old_grid_vel.z += w * w_old;
-                weight_sum.z += w;
-                if (is_sediment) {
-                    let w_water = water_grid_w[idx];
-                    water_velocity.z += w * w_water;
-                }
-
-                // C matrix: row 2 (from W velocity component)
-                // APIC: C[2,:] = Σ w * w * offset * d_inv
+                var reflected=MacWallSample(vec3(ni,nj,nk),1.,true);
+                if phase {reflected=voxel_wall_sample(mac_wall_sample(reflected.node,2u,params._pad1),2u,voxel_bounds);}
+                if !reflected.valid {continue;}
+                let idx = w_index(reflected.node.x, reflected.node.y, reflected.node.z);
                 let offset = vec3<f32>(
                     (f32(ni) + 0.5) * cell_size - pos.x,
                     (f32(nj) + 0.5) * cell_size - pos.y,
                     f32(nk) * cell_size - pos.z
                 );
-                new_c_row2 += offset * (w * w_val * d_inv);
+                var w_val = grid_w[idx];
+                var w_old = grid_w_old[idx];
+                if phase {
+                    let body=select(0.,-sediment_params.gravity*params.dt,2u==1u);
+                    let predictor=old_particle_vel.z+dot(c_col2[id.x],offset)+body;
+                    w_val=reflected.sign*phase_face_velocity(2u,idx,w_val,predictor*reflected.sign,density,id.x);
+                    w_old=reflected.sign*phase_water(2u,idx);
+                }
+                new_velocity.z += w * w_val;
+                old_grid_vel.z += w * w_old;
+                weight_sum.z += w;
+                if is_sediment && !phase && carrier_face_supported(2u,idx) {
+                    water_velocity.z += w * water_grid_w[idx];
+                    water_weight_sum.z += w;
+                }
+                // Use the same local reference in both affine sums. A constant
+                // velocity cancels analytically; centering avoids amplifying its
+                // floating point first-moment residue by 4/h^2 at walls.
+                let affine_reference=select(0.,old_particle_vel.z,phase && !is_sediment);
+                new_c_row2 += offset * (w * (w_val-affine_reference) * d_inv);
+                if phase && !is_sediment {old_grid_c2 += offset * (w * (w_old-old_particle_vel.z) * d_inv);}
             }
         }
     }
@@ -276,24 +358,30 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         new_velocity.x /= weight_sum.x;
         old_grid_vel.x /= weight_sum.x;
         new_c_row0 /= weight_sum.x;
+        if phase && !is_sediment {old_grid_c0 /= weight_sum.x;}
         if (is_sediment) {
-            water_velocity.x /= weight_sum.x;
+            let carrier_weight=select(weight_sum.x,water_weight_sum.x,WATER_SUPPORT_ALLOWED);
+            if carrier_weight>WEIGHT_EPSILON {water_velocity.x /= carrier_weight;}
         }
     }
     if (weight_sum.y > WEIGHT_EPSILON) {
         new_velocity.y /= weight_sum.y;
         old_grid_vel.y /= weight_sum.y;
         new_c_row1 /= weight_sum.y;
+        if phase && !is_sediment {old_grid_c1 /= weight_sum.y;}
         if (is_sediment) {
-            water_velocity.y /= weight_sum.y;
+            let carrier_weight=select(weight_sum.y,water_weight_sum.y,WATER_SUPPORT_ALLOWED);
+            if carrier_weight>WEIGHT_EPSILON {water_velocity.y /= carrier_weight;}
         }
     }
     if (weight_sum.z > WEIGHT_EPSILON) {
         new_velocity.z /= weight_sum.z;
         old_grid_vel.z /= weight_sum.z;
         new_c_row2 /= weight_sum.z;
+        if phase && !is_sediment {old_grid_c2 /= weight_sum.z;}
         if (is_sediment) {
-            water_velocity.z /= weight_sum.z;
+            let carrier_weight=select(weight_sum.z,water_weight_sum.z,WATER_SUPPORT_ALLOWED);
+            if carrier_weight>WEIGHT_EPSILON {water_velocity.z /= carrier_weight;}
         }
     }
 
@@ -314,75 +402,63 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
 
     var final_velocity: vec3<f32>;
 
-    if (is_sediment) {
-        // ========== DRAG-BASED ENTRAINMENT MODEL ==========
-        // Sediment is pulled toward water velocity by drag,
-        // while gravity (reduced by buoyancy) pulls it down.
-        // When water flows fast: drag wins → entrainment
-        // When water is slow: gravity wins → settling
-
-        let water_vel = water_velocity;  // Water-only velocity from grid
-        let particle_vel = old_particle_vel;
-
-        // CORRECTED DRAG MODEL FOR SETTLING
-        // The goal: heavy particles settle upstream, light particles wash downstream.
-        //
-        // Key insight: in a sluice, SETTLING happens while particles are in the water
-        // column, not after they hit the floor. Heavy particles sink fast and land
-        // upstream; light particles drift downstream as they slowly sink.
-        //
-        // Problem with 1/density drag scaling: once particles hit the floor, heavy
-        // particles slide (low drag) while light particles stick (high drag). WRONG!
-        //
-        // Fix: use UNIFORM drag for all particles. The separation happens during
-        // settling through the water column, not during floor sliding.
-
-        var drag_rate = sediment_params.drag_coefficient;  // Same drag for all!
-        if (is_gold) {
-            drag_rate *= sediment_params.gold_drag_multiplier;
-        }
-        let drag_blend = min(drag_rate * params.dt, 0.9);
-
-        // Blend particle velocity toward water velocity (drag entrainment)
-        var vel_after_drag = mix(particle_vel, water_vel, drag_blend);
-
-        // BUOYANCY FORCE: F_buoyancy = (ρ_fluid - ρ_sediment) * V * g
-        // This creates a net downward acceleration for sediment denser than water.
-        // For particles with relative density ρ_rel (water=1.0):
-        //   a_buoyancy = (1.0 - ρ_rel) * g
-        // Negative (downward) for ρ_rel > 1.0, positive (upward) for ρ_rel < 1.0
-        //
-        // This is applied as a velocity change (impulse) over the timestep:
-        //   Δv_buoyancy = a_buoyancy * dt = (1.0 - ρ_rel) * g * dt
-        let buoyancy_accel = (1.0 - density) * sediment_params.gravity;  // m/s²
-        let buoyancy_impulse = buoyancy_accel * params.dt;  // m/s
-        vel_after_drag.y += buoyancy_impulse;  // Negative for dense particles (Y axis points up)
-
-        // SETTLING: Use pre-computed Stokes settling velocities
-        // Heavy particles sink faster, landing upstream before the flow carries them.
-        // Light particles sink slowly, drifting downstream as they fall.
-        //
-        // Stokes settling: vs = g * (rho_p - rho_f) * d^2 / (18 * mu)
-        // The settling velocities are pre-computed on CPU with physical constants.
-        // Gold: smaller particles but much denser, settling_velocity ≈ 0.1 m/s
-        // Sand/gravel: larger particles, settling_velocity ≈ 0.3-0.5 m/s
-        //
-        // Select appropriate settling velocity based on particle type (density threshold)
-        let settling_vel = select(
-            sediment_params.settling_velocity,      // Sand/gravel
-            sediment_params.gold_settling_velocity, // Gold
+    if is_sediment && phase {
+        final_velocity=new_velocity;
+    } else if (is_sediment) {
+        // Exact integration of dv/dt = k * (water_velocity - v) - g_eff Y.
+        // Archimedes: (weight - buoyancy) / mass = g * (1 - rho_water/rho_solid).
+        // Multiplying gravity by relative density omitted the particle's mass.
+        let submerged_gravity = sediment_params.gravity * max(0.0, 1.0 - 1.0 / density);
+        let terminal_slip = select(
+            sediment_params.settling_velocity,
+            sediment_params.gold_settling_velocity,
             is_gold
         );
-        vel_after_drag.y -= settling_vel;
-
-        final_velocity = vel_after_drag;
+        var drag_rate = max(sediment_params.drag_coefficient, 0.0001);
+        // A prescribed terminal velocity sets the relaxation time; it must not
+        // be subtracted every substep (which made sinking scale with tick rate).
+        if (terminal_slip > 0.0 && submerged_gravity > 0.0) {
+            drag_rate = submerged_gravity / terminal_slip;
+        }
+        if (is_gold) {
+            drag_rate *= max(sediment_params.gold_drag_multiplier, 0.0001);
+        }
+        let diameter = densities[params.diameter_offset + id.x];
+        if abs(diameter) > 0. {
+            // Ferguson-Church form, natural grain constants C1=18, C2=1.
+            // Diameter controls drag; representative parcel volume does not.
+            let d = abs(diameter); let relative = max(density-1.,0.);
+            let terminal = relative * sediment_params.gravity * d*d /
+                (18e-6 + sqrt(0.75 * relative * sediment_params.gravity * d*d*d));
+            if submerged_gravity > 0.0 {
+                // Keep the normal-gravity reference calculation bit for bit.
+                drag_rate = submerged_gravity / max(terminal,0.00001);
+            } else {
+                // The zero-gravity viscous limit avoids an undefined 0/0 in
+                // the equilibrium velocity used by transfer regressions.
+                drag_rate = 18e-6 / max(density*d*d,1e-12);
+            }
+        }
+        let equilibrium = water_velocity - vec3<f32>(0.0, submerged_gravity / drag_rate, 0.0);
+        final_velocity = mix(old_particle_vel, equilibrium, 1.0 - exp(-drag_rate * params.dt));
+        if WATER_SUPPORT_ALLOWED {
+            // Do not invent a carrier velocity in an unobserved component.
+            // Missing vertical carrier data uses the existing dry gravity law.
+            // This is a data-availability fallback, not an immersion model.
+            if water_weight_sum.x<=WEIGHT_EPSILON {final_velocity.x=old_particle_vel.x;}
+            if water_weight_sum.y<=WEIGHT_EPSILON {
+                final_velocity.y=old_particle_vel.y-sediment_params.gravity*params.dt;
+            }
+            if water_weight_sum.z<=WEIGHT_EPSILON {final_velocity.z=old_particle_vel.z;}
+        }
+        if diameter < 0. { final_velocity = old_particle_vel - vec3(0.,sediment_params.gravity * params.dt,0.); }
     } else {
         // Water: full FLIP/PIC blend
         final_velocity = params.flip_ratio * flip_velocity + (1.0 - params.flip_ratio) * pic_velocity;
     }
 
     // ========== SEDIMENT: Friction for slow particles ==========
-    if (is_sediment) {
+    if is_sediment && !phase {
         // Friction: when slow, damp velocity (creates clustering/settling)
         let speed = length(final_velocity);
         if (speed < sediment_params.friction_threshold && speed > EPSILON_METERS) {
@@ -390,13 +466,14 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
             let friction_factor = 1.0 - speed / sediment_params.friction_threshold;
             let friction = sediment_params.friction_strength * friction_factor;
             // Apply friction uniformly - drag model handles entrainment
-            final_velocity *= 1.0 - friction;
+            final_velocity *= pow(max(1.0 - friction, 0.0001), params.dt * 60.0);
         }
 
         // Vorticity lift: turbulence can suspend particles
         let cell_i = clamp(i32(pos.x / cell_size), 0, width - 1);
         let cell_j = clamp(i32(pos.y / cell_size), 0, height - 1);
-        let cell_k = clamp(i32(pos.z / cell_size), 0, depth - 1);
+        var cell_k = clamp(i32(pos.z / cell_size), 0, depth - 1);
+        if PERIODIC_Z { cell_k = i32(floor(pos.z / cell_size)); }
         let cell_idx = cell_index(cell_i, cell_j, cell_k);
         let vort = vorticity_mag[cell_idx];
 
@@ -419,9 +496,23 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     // All particles keep APIC C matrix for angular momentum transfer
-    c_col0[id.x] = new_c_row0;
-    c_col1[id.x] = new_c_row1;
-    c_col2[id.x] = new_c_row2;
+    if phase && !is_sediment {
+        // Blend the complete APIC state. Blending only velocity while taking
+        // 100% of the PIC affine field creates spin and kinetic energy even
+        // with no forces. The FLIP affine increment uses the SAME old grid,
+        // weights and (if active) delta limiter as the velocity increment.
+        let force_scale=select(1.,max_dv/max(sqrt(delta_len_sq),0.000001),delta_len_sq>max_dv*max_dv);
+        let flip_c0=c_col0[id.x]+(new_c_row0-old_grid_c0)*force_scale;
+        let flip_c1=c_col1[id.x]+(new_c_row1-old_grid_c1)*force_scale;
+        let flip_c2=c_col2[id.x]+(new_c_row2-old_grid_c2)*force_scale;
+        c_col0[id.x]=params.flip_ratio*flip_c0+(1.-params.flip_ratio)*new_c_row0;
+        c_col1[id.x]=params.flip_ratio*flip_c1+(1.-params.flip_ratio)*new_c_row1;
+        c_col2[id.x]=params.flip_ratio*flip_c2+(1.-params.flip_ratio)*new_c_row2;
+    } else {
+        c_col0[id.x] = new_c_row0;
+        c_col1[id.x] = new_c_row1;
+        c_col2[id.x] = new_c_row2;
+    }
 
     // Safety clamp
     let final_speed = length(final_velocity);
@@ -431,4 +522,14 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
 
     // ========== Write velocity ==========
     velocities[id.x] = final_velocity;
+}
+
+fn voxel_geometry_solid(point:vec3<i32>)->bool {
+ let q=mac_storage_node(point);
+ let n=vec3<i32>(i32(params.width),i32(params.height),i32(params.depth));
+ if any(q<vec3(0)) || any(q>=n) {return false;}
+ let nu=(params.width+1u)*params.height*params.depth;
+ let auxiliary=((nu+4u+63u)/64u)*64u;
+ let markers=((auxiliary+4u*nu+63u)/64u)*64u;
+ return (bitcast<u32>(water_grid_u[markers+cell_index(q.x,q.y,q.z)])&0x80000000u)!=0u;
 }

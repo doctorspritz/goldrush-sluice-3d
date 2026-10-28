@@ -35,12 +35,58 @@ struct PressureParams3D {
     omega: f32, // SOR relaxation factor (1.5-1.9)
     h_sq: f32,  // cell_size^2, for Poisson equation scaling
     open_boundaries: u32, // Bitmask: 1=-X, 2=+X, 4=-Y, 8=+Y, 16=-Z, 32=+Z
-    _pad0: u32,
+    phase_omega: f32,
     _pad1: u32,
+}
+
+/// Residual of the stored pressure equation, before any velocity correction.
+/// Diagnostics are opt-in and never add work or buffers to ordinary stepping.
+#[derive(Debug, Clone, Default)]
+pub struct PressureResidual3D {
+    pub fluid_cells: usize,
+    pub max_abs: f64,
+    pub rms: f64,
+    pub rhs_l2: f64,
+    /// Undefined if a zero RHS has a nonzero residual; this is not convergence.
+    pub relative_l2: Option<f64>,
+    pub max_backward_error: f64,
+}
+
+/// Rectangular mixed-boundary estimate for the weighted operator. This is a
+/// convergence heuristic, not an optimum for arbitrary mobility/air/solid masks.
+/// A closed axis admits a constant mode; a single open end has a half-wave.
+/// The fully closed case estimates the first nonconstant mode, retaining its
+/// pressure nullspace and exposing incompatible sources through the residual.
+fn phase_relaxation(shape: [u32; 3], open: u32, has_air: bool) -> f32 {
+    let mut theta = [0.; 3];
+    for (axis, angle) in theta.iter_mut().enumerate() {
+        let ends = ((open >> (2 * axis)) & 3).count_ones();
+        let n = shape[axis].max(1) as f32;
+        *angle = match ends {
+            0 => 0.,
+            // Neumann at the lower face and zero pressure at the next air
+            // centre: cos(theta*(j+1/2)), theta*(N+1/2)=pi/2.
+            1 => std::f32::consts::PI / (2. * n + 1.),
+            _ => std::f32::consts::PI / (n + 1.),
+        };
+    }
+    if open & 63 == 0 {
+        let axis = (0..3).max_by_key(|&axis| shape[axis]).unwrap();
+        let n = shape[axis].max(1) as f32;
+        // Air inside a closed exterior still grounds pressure. CPU air may
+        // later receive fluid on the GPU, so this remains a spectral estimate,
+        // not a claim that the host mask is current fluid occupancy.
+        theta[axis] = std::f32::consts::PI / if has_air { 2. * n + 1. } else { n };
+    }
+    let rho = theta.iter().map(|v| v.cos()).sum::<f32>() / 3.;
+    (2. / (1. + (1. - rho * rho).max(0.).sqrt())).clamp(1., 1.95)
 }
 
 /// GPU-based pressure solver for 3D FLIP
 pub struct GpuPressure3D {
+    pub compact_iterations: bool,
+    pub cached_stencil: bool,
+    periodic_z: bool,
     width: u32,
     height: u32,
     depth: u32,
@@ -59,6 +105,11 @@ pub struct GpuPressure3D {
     divergence_pipeline: wgpu::ComputePipeline,
     pressure_red_pipeline: wgpu::ComputePipeline,
     pressure_black_pipeline: wgpu::ComputePipeline,
+    packed_red: wgpu::ComputePipeline,
+    packed_black: wgpu::ComputePipeline,
+    stencil_prepare: wgpu::ComputePipeline,
+    stencil_red: wgpu::ComputePipeline,
+    stencil_black: wgpu::ComputePipeline,
     gradient_u_pipeline: wgpu::ComputePipeline,
     gradient_v_pipeline: wgpu::ComputePipeline,
     gradient_w_pipeline: wgpu::ComputePipeline,
@@ -66,6 +117,8 @@ pub struct GpuPressure3D {
     // Bind groups
     divergence_bind_group: wgpu::BindGroup,
     pressure_bind_group: wgpu::BindGroup,
+    pressure_bind_group_layout: wgpu::BindGroupLayout,
+    variable_mobility_allowed: bool,
     gradient_bind_group: wgpu::BindGroup,
 }
 
@@ -80,6 +133,106 @@ impl GpuPressure3D {
         grid_v_buffer: &wgpu::Buffer,
         grid_w_buffer: &wgpu::Buffer,
     ) -> Self {
+        Self::new_impl(
+            device,
+            width,
+            height,
+            depth,
+            grid_u_buffer,
+            grid_v_buffer,
+            grid_w_buffer,
+            None,
+            false,
+        )
+    }
+
+    /// Variable face mobility for a locally eliminated multi-phase response.
+    /// Each plane contains a ready header followed by its MAC coefficients.
+    /// A zero U header selects the unchanged constant-mobility path, allowing
+    /// position repair and phase projection in one ordered GPU submission.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_mobility(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        grid_u_buffer: &wgpu::Buffer,
+        grid_v_buffer: &wgpu::Buffer,
+        grid_w_buffer: &wgpu::Buffer,
+        mobility: [&wgpu::Buffer; 3],
+    ) -> Self {
+        Self::new_impl(
+            device,
+            width,
+            height,
+            depth,
+            grid_u_buffer,
+            grid_v_buffer,
+            grid_w_buffer,
+            Some(mobility),
+            false,
+        )
+    }
+
+    /// Experimental periodic lateral projection for strip benchmarks. This is
+    /// not a complete periodic FLIP solver: transfers/advection must also wrap.
+    /// W face zero owns the seam; the depth face is a redundant output copy.
+    /// Odd periodic depths are incompatible with the red/black checkerboard.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_periodic_z(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        grid_u_buffer: &wgpu::Buffer,
+        grid_v_buffer: &wgpu::Buffer,
+        grid_w_buffer: &wgpu::Buffer,
+        mobility: Option<[&wgpu::Buffer; 3]>,
+    ) -> Result<Self, String> {
+        if width == 0 || height == 0 || depth < 2 || !depth.is_multiple_of(2) {
+            return Err("Periodic pressure requires nonzero X/Y and even Z depth >= 2".into());
+        }
+        Ok(Self::new_impl(
+            device,
+            width,
+            height,
+            depth,
+            grid_u_buffer,
+            grid_v_buffer,
+            grid_w_buffer,
+            mobility,
+            true,
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_impl(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        grid_u_buffer: &wgpu::Buffer,
+        grid_v_buffer: &wgpu::Buffer,
+        grid_w_buffer: &wgpu::Buffer,
+        mobility: Option<[&wgpu::Buffer; 3]>,
+        periodic_z: bool,
+    ) -> Self {
+        let unused = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Constant pressure mobility header"),
+            contents: &[0; 16],
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let variable_mobility_allowed = mobility.is_some();
+        let periodic_constants = std::collections::HashMap::from([(
+            "PERIODIC_Z".to_string(),
+            f64::from(u32::from(periodic_z)),
+        )]);
+        let mut mobility_constants = periodic_constants.clone();
+        mobility_constants.insert(
+            "VARIABLE_MOBILITY_ALLOWED".to_string(),
+            f64::from(u32::from(mobility.is_some())),
+        );
+        let mobility = mobility.unwrap_or([&unused; 3]);
         let cell_count = (width * height * depth) as usize;
 
         // Create shaders
@@ -90,13 +243,25 @@ impl GpuPressure3D {
 
         let pressure_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Pressure 3D Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/pressure_3d.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}",
+                    include_str!("shaders/pressure_mobility.wgsl"),
+                    include_str!("shaders/pressure_3d.wgsl")
+                )
+                .into(),
+            ),
         });
 
         let gradient_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Pressure Gradient 3D Shader"),
             source: wgpu::ShaderSource::Wgsl(
-                include_str!("shaders/pressure_gradient_3d.wgsl").into(),
+                format!(
+                    "{}\n{}",
+                    include_str!("shaders/pressure_mobility.wgsl"),
+                    include_str!("shaders/pressure_gradient_3d.wgsl")
+                )
+                .into(),
             ),
         });
 
@@ -130,6 +295,13 @@ impl GpuPressure3D {
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let stencil_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Pressure neighbour stencil"),
+            size: (cell_count * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
 
@@ -270,6 +442,46 @@ impl GpuPressure3D {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -344,6 +556,36 @@ impl GpuPressure3D {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 8,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -399,6 +641,22 @@ impl GpuPressure3D {
                     binding: 3,
                     resource: pressure_params_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: stencil_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: mobility[0].as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: mobility[1].as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: mobility[2].as_entire_binding(),
+                },
             ],
         });
 
@@ -430,6 +688,18 @@ impl GpuPressure3D {
                     binding: 5,
                     resource: grid_w_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: mobility[0].as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: mobility[1].as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: mobility[2].as_entire_binding(),
+                },
             ],
         });
 
@@ -447,7 +717,10 @@ impl GpuPressure3D {
                 layout: Some(&divergence_pipeline_layout),
                 module: &divergence_shader,
                 entry_point: Some("compute_divergence"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &periodic_constants,
+                    ..Default::default()
+                },
                 cache: None,
             });
 
@@ -464,7 +737,10 @@ impl GpuPressure3D {
                 layout: Some(&pressure_pipeline_layout),
                 module: &pressure_shader,
                 entry_point: Some("pressure_red"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &mobility_constants,
+                    ..Default::default()
+                },
                 cache: None,
             });
 
@@ -474,7 +750,10 @@ impl GpuPressure3D {
                 layout: Some(&pressure_pipeline_layout),
                 module: &pressure_shader,
                 entry_point: Some("pressure_black"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &mobility_constants,
+                    ..Default::default()
+                },
                 cache: None,
             });
 
@@ -491,7 +770,10 @@ impl GpuPressure3D {
                 layout: Some(&gradient_pipeline_layout),
                 module: &gradient_shader,
                 entry_point: Some("apply_gradient_u"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &mobility_constants,
+                    ..Default::default()
+                },
                 cache: None,
             });
 
@@ -501,7 +783,10 @@ impl GpuPressure3D {
                 layout: Some(&gradient_pipeline_layout),
                 module: &gradient_shader,
                 entry_point: Some("apply_gradient_v"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &mobility_constants,
+                    ..Default::default()
+                },
                 cache: None,
             });
 
@@ -511,11 +796,60 @@ impl GpuPressure3D {
                 layout: Some(&gradient_pipeline_layout),
                 module: &gradient_shader,
                 entry_point: Some("apply_gradient_w"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &mobility_constants,
+                    ..Default::default()
+                },
                 cache: None,
             });
 
+        let pipeline = |module: &wgpu::ShaderModule, layout: &wgpu::PipelineLayout, entry| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: Some(layout),
+                module,
+                entry_point: Some(entry),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &mobility_constants,
+                    ..Default::default()
+                },
+                cache: None,
+            })
+        };
+        let packed_red = pipeline(
+            &pressure_shader,
+            &pressure_pipeline_layout,
+            "pressure_red_packed",
+        );
+        let packed_black = pipeline(
+            &pressure_shader,
+            &pressure_pipeline_layout,
+            "pressure_black_packed",
+        );
+        let stencil_prepare = pipeline(
+            &pressure_shader,
+            &pressure_pipeline_layout,
+            "prepare_stencil",
+        );
+        let stencil_red = pipeline(
+            &pressure_shader,
+            &pressure_pipeline_layout,
+            "pressure_red_stencil",
+        );
+        let stencil_black = pipeline(
+            &pressure_shader,
+            &pressure_pipeline_layout,
+            "pressure_black_stencil",
+        );
         Self {
+            compact_iterations: true,
+            cached_stencil: true,
+            periodic_z,
+            stencil_prepare,
+            stencil_red,
+            stencil_black,
+            packed_red,
+            packed_black,
             width,
             height,
             depth,
@@ -533,8 +867,157 @@ impl GpuPressure3D {
             gradient_w_pipeline,
             divergence_bind_group,
             pressure_bind_group,
+            pressure_bind_group_layout,
+            variable_mobility_allowed,
             gradient_bind_group,
         }
+    }
+
+    /// Measure b-Ap for the actual stored equation, including variable MAC
+    /// mobility, solid Neumann faces and zero-pressure air/open boundaries.
+    /// Creates its pipeline and scratch/readback buffers only on this call.
+    /// It does not clear pressure, recompute divergence, or apply a gradient.
+    pub fn measure_residual(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<PressureResidual3D, String> {
+        let count = u64::from(self.width) * u64::from(self.height) * u64::from(self.depth);
+        if count == 0 {
+            return Ok(PressureResidual3D::default());
+        }
+        let bytes = count * 16;
+        let output = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Pressure residual diagnostic"),
+            size: bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Pressure residual readback"),
+            size: bytes,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Pressure residual output"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Pressure residual output"),
+            layout: &layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: output.as_entire_binding(),
+            }],
+        });
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Pressure residual operator"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}",
+                    include_str!("shaders/pressure_mobility.wgsl"),
+                    include_str!("shaders/pressure_3d.wgsl"),
+                )
+                .into(),
+            ),
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Pressure residual operator"),
+            bind_group_layouts: &[&self.pressure_bind_group_layout, &layout],
+            push_constant_ranges: &[],
+        });
+        let constants = std::collections::HashMap::from([
+            (
+                "VARIABLE_MOBILITY_ALLOWED".to_string(),
+                f64::from(u32::from(self.variable_mobility_allowed)),
+            ),
+            (
+                "PERIODIC_Z".to_string(),
+                f64::from(u32::from(self.periodic_z)),
+            ),
+        ]);
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Measure stored pressure residual"),
+            layout: Some(&pipeline_layout),
+            module: &module,
+            entry_point: Some("measure_residual"),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &constants,
+                ..Default::default()
+            },
+            cache: None,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &self.pressure_bind_group, &[]);
+            pass.set_bind_group(1, &group, &[]);
+            pass.dispatch_workgroups(
+                self.width.div_ceil(8),
+                self.height.div_ceil(8),
+                self.depth.div_ceil(4),
+            );
+        }
+        encoder.copy_buffer_to_buffer(&output, 0, &staging, 0, bytes);
+        queue.submit(Some(encoder.finish()));
+        let (tx, rx) = std::sync::mpsc::channel();
+        staging
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = tx.send(result);
+            });
+        device.poll(wgpu::Maintain::Wait);
+        rx.recv()
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+        let mut result = PressureResidual3D::default();
+        let mut r2 = 0.;
+        let mut b2 = 0.;
+        let mut nonfinite = false;
+        {
+            let data = staging.slice(..).get_mapped_range();
+            for row in bytemuck::cast_slice::<u8, [f32; 4]>(&data) {
+                if row[3] == 0. {
+                    continue;
+                }
+                result.fluid_cells += 1;
+                nonfinite |= row.iter().any(|x| !x.is_finite());
+                let r = f64::from(row[0]);
+                let b = f64::from(row[1]);
+                r2 += r * r;
+                b2 += b * b;
+                result.max_abs = result.max_abs.max(r.abs());
+                if row[2] > 0. {
+                    result.max_backward_error =
+                        result.max_backward_error.max(r.abs() / f64::from(row[2]));
+                }
+            }
+        }
+        staging.unmap();
+        if nonfinite {
+            return Err("Nonfinite stored pressure equation or residual".into());
+        }
+        result.rms = (r2 / result.fluid_cells.max(1) as f64).sqrt();
+        result.rhs_l2 = b2.sqrt();
+        result.relative_l2 = if b2 > 0. {
+            Some((r2 / b2).sqrt())
+        } else if r2 == 0. {
+            Some(0.)
+        } else {
+            None
+        };
+        Ok(result)
     }
 
     /// Upload cell types and initialize pressure to zero
@@ -545,6 +1028,10 @@ impl GpuPressure3D {
         cell_size: f32,
         open_boundaries: u32,
     ) {
+        assert!(
+            !self.periodic_z || open_boundaries & 48 == 0,
+            "Periodic Z cannot also have open Z boundaries"
+        );
         queue.write_buffer(&self.cell_type_buffer, 0, bytemuck::cast_slice(cell_types));
 
         // Upload grid params
@@ -565,11 +1052,18 @@ impl GpuPressure3D {
         );
 
         // Upload pressure params
-        // NOTE: For 3D grids, optimal SOR omega is approximately:
-        //   omega = 2 / (1 + sin(π/N)) where N is largest grid dimension
+        // Retain the ordinary solver's existing largest-dimension estimate.
+        // The weighted operator has a separate mixed-boundary estimate; neither
+        // formula is a universal optimum for irregular variable coefficients.
         let max_dim = self.width.max(self.height).max(self.depth) as f32;
         let omega = 2.0 / (1.0 + (std::f32::consts::PI / max_dim).sin());
-        let omega = omega.clamp(1.0, 1.95);
+        // Width-independent initial SOR for periodic comparison controls. It is
+        // deliberately not claimed optimal for a loaded/irregular strip.
+        let omega = if self.periodic_z {
+            1.5
+        } else {
+            omega.clamp(1.0, 1.95)
+        };
         let pressure_params = PressureParams3D {
             width: self.width,
             height: self.height,
@@ -577,7 +1071,17 @@ impl GpuPressure3D {
             omega,
             h_sq: cell_size * cell_size, // Poisson equation needs dx²
             open_boundaries,
-            _pad0: 0,
+            phase_omega: if self.periodic_z {
+                1.5
+            } else if self.variable_mobility_allowed {
+                phase_relaxation(
+                    [self.width, self.height, self.depth],
+                    open_boundaries,
+                    cell_types.contains(&0),
+                )
+            } else {
+                omega
+            },
             _pad1: 0,
         };
         queue.write_buffer(
@@ -589,51 +1093,93 @@ impl GpuPressure3D {
 
     /// Encode full pressure solve: divergence → iterations → gradient
     pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, iterations: u32) {
+        self.encode_profiled(encoder, iterations, None);
+    }
+
+    pub fn encode_profiled(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        iterations: u32,
+        timer: Option<&mut super::timing::GpuStageTimer>,
+    ) {
+        self.encode_with_rhs_profiled(encoder, iterations, timer, false, |_| {});
+    }
+
+    /// Insert a consistent divergence target before every pressure solve,
+    /// including diagnostic reprojection. Ordinary projection uses no target.
+    pub fn encode_with_rhs_profiled(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        iterations: u32,
+        mut timer: Option<&mut super::timing::GpuStageTimer>,
+        restore_pressure: bool,
+        mut rhs: impl FnMut(&mut wgpu::CommandEncoder),
+    ) {
+        let bytes = (self.width * self.height * self.depth * 4) as u64;
+        for solve in 0..if restore_pressure { 2 } else { 1 } {
+            let workgroups_x = self.width.div_ceil(8);
+            let workgroups_y = self.height.div_ceil(8);
+            let workgroups_z = self.depth.div_ceil(4);
+
+            // Compute divergence
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Divergence 3D Pass"),
+                    timestamp_writes: timer
+                        .as_deref_mut()
+                        .map(|timer| timer.pass("Divergence 3D Pass")),
+                });
+                pass.set_pipeline(&self.divergence_pipeline);
+                pass.set_bind_group(0, &self.divergence_bind_group, &[]);
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            }
+
+            rhs(encoder);
+            self.encode_projection_profiled(encoder, iterations, timer.as_deref_mut());
+            if restore_pressure && solve == 0 {
+                encoder.copy_buffer_to_buffer(
+                    &self.pressure_buffer,
+                    0,
+                    &self.pressure_backup_buffer,
+                    0,
+                    bytes,
+                );
+            }
+        }
+        if restore_pressure {
+            encoder.copy_buffer_to_buffer(
+                &self.pressure_backup_buffer,
+                0,
+                &self.pressure_buffer,
+                0,
+                bytes,
+            );
+        }
+    }
+
+    fn encode_projection_profiled(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        iterations: u32,
+        mut timer: Option<&mut super::timing::GpuStageTimer>,
+    ) {
         let workgroups_x = self.width.div_ceil(8);
         let workgroups_y = self.height.div_ceil(8);
         let workgroups_z = self.depth.div_ceil(4);
-
-        // Compute divergence
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Divergence 3D Pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.divergence_pipeline);
-            pass.set_bind_group(0, &self.divergence_bind_group, &[]);
-            pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
-        }
-
-        // Red-Black Gauss-Seidel iterations
-        for _ in 0..iterations {
-            // Red pass
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("Pressure Red 3D Pass"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.pressure_red_pipeline);
-                pass.set_bind_group(0, &self.pressure_bind_group, &[]);
-                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
-            }
-
-            // Black pass
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("Pressure Black 3D Pass"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.pressure_black_pipeline);
-                pass.set_bind_group(0, &self.pressure_bind_group, &[]);
-                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
-            }
-        }
+        self.encode_iterations_only_profiled(
+            encoder,
+            iterations,
+            timer.as_deref_mut(),
+            "Velocity pressure sweeps",
+        );
 
         // Apply pressure gradient to U
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Gradient U 3D Pass"),
-                timestamp_writes: None,
+                timestamp_writes: timer
+                    .as_deref_mut()
+                    .map(|timer| timer.pass("Gradient U 3D Pass")),
             });
             pass.set_pipeline(&self.gradient_u_pipeline);
             pass.set_bind_group(0, &self.gradient_bind_group, &[]);
@@ -645,7 +1191,9 @@ impl GpuPressure3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Gradient V 3D Pass"),
-                timestamp_writes: None,
+                timestamp_writes: timer
+                    .as_deref_mut()
+                    .map(|timer| timer.pass("Gradient V 3D Pass")),
             });
             pass.set_pipeline(&self.gradient_v_pipeline);
             pass.set_bind_group(0, &self.gradient_bind_group, &[]);
@@ -657,7 +1205,7 @@ impl GpuPressure3D {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Gradient W 3D Pass"),
-                timestamp_writes: None,
+                timestamp_writes: timer.map(|timer| timer.pass("Gradient W 3D Pass")),
             });
             pass.set_pipeline(&self.gradient_w_pipeline);
             pass.set_bind_group(0, &self.gradient_bind_group, &[]);
@@ -672,23 +1220,16 @@ impl GpuPressure3D {
         encoder: &mut wgpu::CommandEncoder,
         iterations: u32,
     ) {
-        self.encode(encoder, iterations);
-        let byte_size = (self.width * self.height * self.depth * std::mem::size_of::<f32>() as u32) as u64;
-        encoder.copy_buffer_to_buffer(
-            &self.pressure_buffer,
-            0,
-            &self.pressure_backup_buffer,
-            0,
-            byte_size,
-        );
-        self.encode(encoder, iterations);
-        encoder.copy_buffer_to_buffer(
-            &self.pressure_backup_buffer,
-            0,
-            &self.pressure_buffer,
-            0,
-            byte_size,
-        );
+        self.encode_with_pressure_restore_profiled(encoder, iterations, None);
+    }
+
+    pub fn encode_with_pressure_restore_profiled(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        iterations: u32,
+        timer: Option<&mut super::timing::GpuStageTimer>,
+    ) {
+        self.encode_with_rhs_profiled(encoder, iterations, timer, true, |_| {});
     }
 
     /// Encode just the divergence pass (no pressure iterations or gradient apply).
@@ -717,17 +1258,47 @@ impl GpuPressure3D {
     /// - divergence_buffer is pre-filled with density error
     /// - We want the resulting pressure to apply to particle positions, not grid velocities
     pub fn encode_iterations_only(&self, encoder: &mut wgpu::CommandEncoder, iterations: u32) {
+        self.encode_iterations_only_profiled(encoder, iterations, None, "Pressure sweeps");
+    }
+
+    pub fn encode_iterations_only_profiled(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        iterations: u32,
+        mut timer: Option<&mut super::timing::GpuStageTimer>,
+        profile_label: &'static str,
+    ) {
         let workgroups_x = self.width.div_ceil(8);
         let workgroups_y = self.height.div_ceil(8);
         let workgroups_z = self.depth.div_ceil(4);
 
+        if self.compact_iterations {
+            // Dispatches in a compute pass execute in order. Keep all red/black
+            // sweeps and their storage dependencies, without 2*N pass encoders.
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Ordered red/black pressure sweeps"),
+                timestamp_writes: timer.as_deref_mut().map(|timer| timer.pass(profile_label)),
+            });
+            pass.set_bind_group(0, &self.pressure_bind_group, &[]);
+            if self.cached_stencil {
+                pass.set_pipeline(&self.stencil_prepare);
+                pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+            }
+            for _ in 0..iterations {
+                pass.set_pipeline(if self.cached_stencil { &self.stencil_red } else { &self.packed_red });
+                pass.dispatch_workgroups(self.width.div_ceil(64), self.height.div_ceil(2), self.depth.div_ceil(2));
+                pass.set_pipeline(if self.cached_stencil { &self.stencil_black } else { &self.packed_black });
+                pass.dispatch_workgroups(self.width.div_ceil(64), self.height.div_ceil(2), self.depth.div_ceil(2));
+            }
+            return;
+        }
         // Red-Black Gauss-Seidel iterations
         for _ in 0..iterations {
             // Red pass
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Density Pressure Red 3D Pass"),
-                    timestamp_writes: None,
+                    timestamp_writes: timer.as_deref_mut().map(|timer| timer.pass(profile_label)),
                 });
                 pass.set_pipeline(&self.pressure_red_pipeline);
                 pass.set_bind_group(0, &self.pressure_bind_group, &[]);
@@ -738,7 +1309,7 @@ impl GpuPressure3D {
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("Density Pressure Black 3D Pass"),
-                    timestamp_writes: None,
+                    timestamp_writes: timer.as_deref_mut().map(|timer| timer.pass(profile_label)),
                 });
                 pass.set_pipeline(&self.pressure_black_pipeline);
                 pass.set_bind_group(0, &self.pressure_bind_group, &[]);
@@ -766,8 +1337,21 @@ mod tests {
             Path::new(env!("CARGO_MANIFEST_DIR")).join("src/gpu/shaders").join(shader);
         let source = fs::read_to_string(&shader_path)
             .unwrap_or_else(|e| panic!("Failed to read {:?}: {e}", shader_path));
-        let module = naga::front::wgsl::parse_str(&source)
-            .unwrap_or_else(|e| panic!("Failed to parse {:?}: {}", shader_path, e.emit_to_string(&source)));
+        let source = if shader == "pressure_3d.wgsl" {
+            format!(
+                "{}\n{source}",
+                include_str!("shaders/pressure_mobility.wgsl")
+            )
+        } else {
+            source
+        };
+        let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|e| {
+            panic!(
+                "Failed to parse {:?}: {}",
+                shader_path,
+                e.emit_to_string(&source)
+            )
+        });
 
         let mut layouter = naga::proc::Layouter::default();
         let gctx = naga::proc::GlobalCtx {
@@ -829,6 +1413,10 @@ mod tests {
         assert_eq!(
             *layout.offsets.get("h_sq").unwrap(),
             offset_of!(PressureParams3D, h_sq) as u32
+        );
+        assert_eq!(
+            *layout.offsets.get("phase_omega").unwrap(),
+            offset_of!(PressureParams3D, phase_omega) as u32
         );
     }
 }

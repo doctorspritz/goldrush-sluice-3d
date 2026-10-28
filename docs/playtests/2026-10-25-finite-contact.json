@@ -1,0 +1,986 @@
+{
+  "base_commit": "584d58ed24d1bf5d3e40f909d881f8195498111f",
+  "previous_goal_turn": "progress: rendering checkpoint 584d58e committed, pushed and natively verified",
+  "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/finite-contact-bank-20261025",
+  "model": "finite pressure potential on complete registered closed geometry; no gameplay selection",
+  "changed_owned_sources": {
+    "crates/mining-sim/src/articulation/retained/tests.rs": "21ffd7dc5c47cc38b5c22c9ca50e50aa5615a3183c4af85595128343fb152c3f",
+    "crates/mining-sim/src/articulation/retained/tests/pressure_geometry.rs": "d0e9c7177613746cf03b6cd2d7acd6930c8f3d289fd7e0bd38a095eaf223a07a",
+    "crates/mining-sim/src/articulation/retained/tests/pressure_geometry/qualification.rs": "ccb620063252a67abe3b94b5206dbbecb785504b392ca76597c15e67c8d9e923",
+    "crates/mining-sim/src/articulation/retained/tests/pressure_geometry/rigid_shell.rs": "88e0ce56e70ddc2edcdf8a94a38877e347f373afb91448a5a73834ce61d3536f",
+    "crates/mining-sim/src/soil_response.rs": "a361cbd95c0575fa4b2f79a84691280cca0d732615eaaeaf81274a8d463083a2",
+    "crates/mining-sim/src/soil_response/pressure.rs": "d44783314defab9c785bca8d04458a3f00eeea569949d51e3eb2e0a568622200",
+    "crates/mining-sim/src/soil_response/pressure/geometry.rs": "eff37ab7e02c34fb85ab48ad7fef8b35fdd05303ac8d664d018c85f6ca3c5117",
+    "crates/mining-sim/src/soil_response/pressure/poly.rs": "b33a93d7b00751d6442c95426b23e7a3b59a6b05c68bc7e9355bed6ab5ab1727",
+    "crates/mining-sim/src/soil_response/pressure/rigid.rs": "42eccc48d72daa3204c4a2ebc52c3cc7194a4879b4fb670b2e7f57f47ab75daf",
+    "crates/mining-sim/src/soil_response/pressure/rigid/exact.rs": "ccd0b111f891be00ce6d2c0812b781a4bd071136e5324c918396a60d60413da2",
+    "crates/mining-sim/src/soil_response/pressure/tests.rs": "b7a0cc3adb83da444fed6265742d6c93a9954fb10e481b4b852aa9210697f167"
+  },
+  "protected_other_initial_sources": 726,
+  "source_manifest": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/finite-contact-bank-20261025/source-manifest-final.json",
+  "inputs": {
+    "worst-before.bin": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-geometry-20261024/fresh-verified-final/worst-before.bin",
+      "sha256": "7147a81a9830b2d27fcfca6feef4ef419ef8a09fede2899a7ab6e02af7c8db0b"
+    },
+    "worst-after.bin": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/contact-geometry-20261024/fresh-verified-final/worst-after.bin",
+      "sha256": "6f54234a1ed418414b2fd4abb10e8c1614411668c0e8275f21532fe29c4d7dc9"
+    }
+  },
+  "quality": {
+    "full_default_passed": 65,
+    "full_audit_passed": 107,
+    "full_audit_ignored": 23,
+    "additional_edge_test_passed": 1,
+    "saved_bank_test_passed": 1,
+    "legacy_baseline_compatibility_test_passed": 1,
+    "other_opt_in_audit_tests_unrun": 21,
+    "strict_scoped_clippy": "pass, including edge test",
+    "format": "pass",
+    "full_app_native_benchmark": "not rerun; no app/renderer/solver policy changes"
+  },
+  "saved_bank": {
+    "applied_pressure_forces": false,
+    "calibrated_material": false,
+    "complete_owner_encoding_unchanged": true,
+    "directional_pressure_tie_volume_m3": 0.0,
+    "elastic_potential_j": 0.037897038405872135,
+    "failure_count": 0,
+    "failures_first16": [],
+    "gameplay_adopted": false,
+    "geometry": {
+      "captured_coefficients_normalized": false,
+      "clods": 1040,
+      "faces": 5072,
+      "pressure_tets": 7576,
+      "vertices": 5868
+    },
+    "input_encoding_roundtrip_exact": true,
+    "max_force_pair_residual_n": 3.37765317121503e-12,
+    "max_moment_pair_residual_nm": 1.2778377738047307e-13,
+    "max_power_residual_w": 1.7763568394002505e-15,
+    "observational_only": true,
+    "overlap_volume_m3": 8.414536794389496e-05,
+    "pairs": {
+      "admitted_clod_clod": 16632,
+      "all": 18244,
+      "outside_qualified_scope": 1052,
+      "outside_shape_census": {
+        "other:Capsule / other:Capsule": 1,
+        "other:Capsule / other:Compound": 1,
+        "other:Cuboid / other:Capsule": 2,
+        "other:Cuboid / other:Cuboid": 1,
+        "other:HeightField / clod:ConvexPolyhedron": 1040,
+        "other:HeightField / other:Capsule": 1,
+        "other:HeightField / other:Compound": 1,
+        "other:HeightField / other:Cuboid": 5
+      },
+      "positive_finite_overlap": 2701,
+      "zero_finite_overlap": 13931,
+      "zero_overlap_with_negative_cached_contact": 1175
+    },
+    "rigid_steel_union": {
+      "admitted_clod_steel_pairs": 560,
+      "candidate_rigid_tetrahedra": 1031,
+      "clipping": "exact rational; positive tetrahedral integrals and compensated f64 moments",
+      "cpu_wall_seconds": 4.530452786999993,
+      "energy_roundoff_estimate_j": 8.236327578813402e-19,
+      "faces": 137,
+      "failure_count": 0,
+      "failures_first4": [],
+      "input_rigid_tetrahedra": 179200,
+      "max_force_residual_n": 0.0,
+      "max_moment_residual_nm": 8.299194064395253e-21,
+      "max_pair_wall_seconds": 0.368619208,
+      "max_power_residual_w": 4.163336342344337e-17,
+      "maximum_subset_recursion_depth": 1,
+      "overlap_m3": 3.4756022550295873e-07,
+      "passed": true,
+      "pose_and_partition_qualification": [
+        {
+          "colliders": [
+            [
+              657,
+              0
+            ],
+            [
+              17,
+              0
+            ]
+          ],
+          "finite_difference_derivatives": [
+            {
+              "absolute_error": 1.669515220514839e-13,
+              "body": 0,
+              "dof": 0,
+              "energy_derivative": -1.9887219854849286e-05,
+              "negative_wrench": -1.9887219687897764e-05,
+              "normalized_error": 1.669515220514839e-13,
+              "step": 1e-07
+            },
+            {
+              "absolute_error": 4.0738481255075953e-08,
+              "body": 0,
+              "dof": 1,
+              "energy_derivative": 1.536462665594564,
+              "negative_wrench": 1.5364626248560826,
+              "normalized_error": 2.651446219118602e-08,
+              "step": 1e-07
+            },
+            {
+              "absolute_error": 5.513857370686992e-09,
+              "body": 0,
+              "dof": 2,
+              "energy_derivative": -0.4062091640509027,
+              "negative_wrench": -0.4062091585370453,
+              "normalized_error": 5.513857370686992e-09,
+              "step": 1e-07
+            },
+            {
+              "absolute_error": 2.7714047202975767e-11,
+              "body": 0,
+              "dof": 3,
+              "energy_derivative": 0.006754573597588464,
+              "negative_wrench": 0.006754573569874417,
+              "normalized_error": 2.7714047202975767e-09,
+              "step": 1e-06
+            },
+            {
+              "absolute_error": 4.209256207476919e-12,
+              "body": 0,
+              "dof": 4,
+              "energy_derivative": 0.013477403995609556,
+              "negative_wrench": 0.0134774039914003,
+              "normalized_error": 3.1231950966581847e-10,
+              "step": 1e-06
+            },
+            {
+              "absolute_error": 3.1378719761443463e-10,
+              "body": 0,
+              "dof": 5,
+              "energy_derivative": 0.05185543106351232,
+              "negative_wrench": 0.05185543074972512,
+              "normalized_error": 6.0511925400853256e-09,
+              "step": 1e-06
+            },
+            {
+              "absolute_error": 1.669515220514839e-13,
+              "body": 1,
+              "dof": 0,
+              "energy_derivative": 1.9887219854849286e-05,
+              "negative_wrench": 1.9887219687897764e-05,
+              "normalized_error": 1.669515220514839e-13,
+              "step": 1e-07
+            },
+            {
+              "absolute_error": 4.244420237498048e-08,
+              "body": 1,
+              "dof": 1,
+              "energy_derivative": -1.536462667300285,
+              "negative_wrench": -1.5364626248560826,
+              "normalized_error": 2.7624623284572924e-08,
+              "step": 1e-07
+            },
+            {
+              "absolute_error": 5.513857370686992e-09,
+              "body": 1,
+              "dof": 2,
+              "energy_derivative": 0.4062091640509027,
+              "negative_wrench": 0.4062091585370453,
+              "normalized_error": 5.513857370686992e-09,
+              "step": 1e-07
+            },
+            {
+              "absolute_error": 7.642518728978587e-09,
+              "body": 1,
+              "dof": 3,
+              "energy_derivative": -0.17670099838534914,
+              "negative_wrench": -0.1767009907428304,
+              "normalized_error": 4.325113496139846e-08,
+              "step": 1e-06
+            },
+            {
+              "absolute_error": 2.282058597646852e-09,
+              "body": 1,
+              "dof": 4,
+              "energy_derivative": -0.1318779909150814,
+              "negative_wrench": -0.1318779886330228,
+              "normalized_error": 1.730431728457488e-08,
+              "step": 1e-06
+            },
+            {
+              "absolute_error": 1.2857370218499753e-07,
+              "body": 1,
+              "dof": 5,
+              "energy_derivative": -0.4996905957278033,
+              "negative_wrench": -0.4996904671541011,
+              "normalized_error": 2.5730662790987476e-07,
+              "step": 1e-06
+            }
+          ],
+          "max_force_derivative_error_n": 4.244420237498048e-08,
+          "max_normalized_derivative_error": 2.5730662790987476e-07,
+          "max_torque_derivative_error_nm": 1.2857370218499753e-07,
+          "name": "largest_steel_force",
+          "passed": true,
+          "reference_overlap_m3": 3.4752759776765533e-07,
+          "reference_potential_j": 0.00023183098147750342,
+          "same_material_partition_controls": [
+            {
+              "energy_error_j": 2.710505431213761e-20,
+              "force_error_n": 8.673617379884035e-19,
+              "levels": [
+                1,
+                0
+              ],
+              "overlap_error_m3": 5.293955920339377e-23,
+              "torque_error_nm": 6.798699777552591e-17
+            },
+            {
+              "energy_error_j": 0.0,
+              "force_error_n": 2.288799834055336e-16,
+              "levels": [
+                2,
+                0
+              ],
+              "overlap_error_m3": 0.0,
+              "torque_error_nm": 1.1443916996305594e-16
+            }
+          ]
+        }
+      ],
+      "positive_overlap_pairs": 4,
+      "potential_j": 0.0002318320113427836,
+      "registered_parts": 19,
+      "rigid_bodies": 1,
+      "source_compound_regenerated": false,
+      "subset_intersection_visits": 8328,
+      "tetrahedra": 320,
+      "vertices": 198,
+      "volume_roundoff_estimate_m3": 1.2347819673513482e-21,
+      "zero_overlap_pairs": 556
+    },
+    "saved_pose_and_partition_qualification": [
+      {
+        "colliders": [
+          [
+            660,
+            0
+          ],
+          [
+            661,
+            0
+          ]
+        ],
+        "finite_difference_derivatives": [
+          {
+            "absolute_error": 6.437961483363175e-10,
+            "body": 0,
+            "dof": 0,
+            "energy_derivative": -0.02934968641385427,
+            "negative_wrench": -0.029349685770058122,
+            "normalized_error": 6.437961483363175e-10,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 1.410936434353971e-08,
+            "body": 0,
+            "dof": 1,
+            "energy_derivative": 26.23481638944214,
+            "negative_wrench": 26.234816403551505,
+            "normalized_error": 5.378106759546322e-10,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 8.251752081633867e-08,
+            "body": 0,
+            "dof": 2,
+            "energy_derivative": -7.101788236547891,
+            "negative_wrench": -7.10178815403037,
+            "normalized_error": 1.161925955376693e-08,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 8.918277227820681e-11,
+            "body": 0,
+            "dof": 3,
+            "energy_derivative": -0.4165245642475529,
+            "negative_wrench": -0.4165245643367357,
+            "normalized_error": 2.1411167531072134e-10,
+            "step": 1e-06
+          },
+          {
+            "absolute_error": 1.3712381924380068e-12,
+            "body": 0,
+            "dof": 4,
+            "energy_derivative": -0.010570830077591409,
+            "negative_wrench": -0.01057083007622017,
+            "normalized_error": 1.297190648580028e-10,
+            "step": 1e-06
+          },
+          {
+            "absolute_error": 1.1913192654589011e-11,
+            "body": 0,
+            "dof": 5,
+            "energy_derivative": -0.08114672575554316,
+            "negative_wrench": -0.08114672576745635,
+            "normalized_error": 1.4681051566675485e-10,
+            "step": 1e-06
+          },
+          {
+            "absolute_error": 6.437588205565614e-10,
+            "body": 1,
+            "dof": 0,
+            "energy_derivative": 0.02934968641385427,
+            "negative_wrench": 0.02934968577009545,
+            "normalized_error": 6.437588205565614e-10,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 1.410968764048448e-08,
+            "body": 1,
+            "dof": 1,
+            "energy_derivative": -26.23481638944214,
+            "negative_wrench": -26.23481640355183,
+            "normalized_error": 5.378229991567322e-10,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 8.251739735953834e-08,
+            "body": 1,
+            "dof": 2,
+            "energy_derivative": 7.101788236547891,
+            "negative_wrench": 7.101788154030493,
+            "normalized_error": 1.1619242169863576e-08,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 2.0911938847234524e-11,
+            "body": 1,
+            "dof": 3,
+            "energy_derivative": -0.21914996064034686,
+            "negative_wrench": -0.2191499606612588,
+            "normalized_error": 9.542296418459419e-11,
+            "step": 1e-06
+          },
+          {
+            "absolute_error": 1.7922038852979938e-11,
+            "body": 1,
+            "dof": 4,
+            "energy_derivative": 0.013054708931925507,
+            "negative_wrench": 0.013054708914003468,
+            "normalized_error": 1.3728409378129676e-09,
+            "step": 1e-06
+          },
+          {
+            "absolute_error": 2.8389721129506995e-11,
+            "body": 1,
+            "dof": 5,
+            "energy_derivative": 0.09294952117884503,
+            "negative_wrench": 0.09294952120723475,
+            "normalized_error": 3.054316015916957e-10,
+            "step": 1e-06
+          }
+        ],
+        "max_force_derivative_error_n": 8.251752081633867e-08,
+        "max_normalized_derivative_error": 1.161925955376693e-08,
+        "max_torque_derivative_error_nm": 8.918277227820681e-11,
+        "name": "largest_potential",
+        "passed": true,
+        "reference_overlap_m3": 1.2007681349117922e-05,
+        "reference_potential_j": 0.02086208723151411,
+        "same_material_partition_controls": [
+          {
+            "energy_error_j": 2.0816681711721685e-17,
+            "force_error_n": 2.976336323501e-13,
+            "levels": [
+              1,
+              0
+            ],
+            "overlap_error_m3": 3.3881317890172014e-21,
+            "torque_error_nm": 7.740226513886333e-15
+          },
+          {
+            "energy_error_j": 2.42861286636753e-17,
+            "force_error_n": 2.316055359078939e-13,
+            "levels": [
+              0,
+              1
+            ],
+            "overlap_error_m3": 1.5246593050577406e-20,
+            "torque_error_nm": 7.674755634964998e-15
+          },
+          {
+            "energy_error_j": 1.734723475976807e-17,
+            "force_error_n": 3.472201457035838e-13,
+            "levels": [
+              1,
+              1
+            ],
+            "overlap_error_m3": 4.573977915173222e-20,
+            "torque_error_nm": 5.497412868120665e-15
+          }
+        ],
+        "selected_rank": 0
+      },
+      {
+        "colliders": [
+          [
+            898,
+            0
+          ],
+          [
+            900,
+            0
+          ]
+        ],
+        "finite_difference_derivatives": [
+          {
+            "absolute_error": 2.1662730276261755e-07,
+            "body": 0,
+            "dof": 0,
+            "energy_derivative": 18.702479859192962,
+            "negative_wrench": 18.70247964256566,
+            "normalized_error": 1.1582811712326865e-08,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 1.9134130224696122e-08,
+            "body": 0,
+            "dof": 1,
+            "energy_derivative": -0.042478600966594504,
+            "negative_wrench": -0.04247858183246428,
+            "normalized_error": 1.9134130224696122e-08,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 2.5401298772709247e-10,
+            "body": 0,
+            "dof": 2,
+            "energy_derivative": 0.021078702784962933,
+            "negative_wrench": 0.021078702530949945,
+            "normalized_error": 2.5401298772709247e-10,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 3.5345761517299734e-10,
+            "body": 0,
+            "dof": 3,
+            "energy_derivative": -0.0012760464555665318,
+            "negative_wrench": -0.001276046809024147,
+            "normalized_error": 3.5345761517299734e-08,
+            "step": 1e-06
+          },
+          {
+            "absolute_error": 6.125058793493565e-11,
+            "body": 0,
+            "dof": 4,
+            "energy_derivative": -0.2000407616545817,
+            "negative_wrench": -0.2000407617158323,
+            "normalized_error": 3.0619053541670227e-10,
+            "step": 1e-06
+          },
+          {
+            "absolute_error": 1.0426656760209596e-10,
+            "body": 0,
+            "dof": 5,
+            "energy_derivative": -0.053422944593702754,
+            "negative_wrench": -0.053422944489436186,
+            "normalized_error": 1.9517188428132137e-09,
+            "step": 1e-06
+          },
+          {
+            "absolute_error": 2.1662739158045952e-07,
+            "body": 1,
+            "dof": 0,
+            "energy_derivative": -18.702479859192962,
+            "negative_wrench": -18.70247964256557,
+            "normalized_error": 1.1582816461314306e-08,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 1.9134128913245174e-08,
+            "body": 1,
+            "dof": 1,
+            "energy_derivative": 0.042478600966594504,
+            "negative_wrench": 0.04247858183246559,
+            "normalized_error": 1.9134128913245174e-08,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 2.5401153749826655e-10,
+            "body": 1,
+            "dof": 2,
+            "energy_derivative": -0.021078702784962933,
+            "negative_wrench": -0.021078702530951395,
+            "normalized_error": 2.5401153749826655e-10,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 2.7949909913089523e-09,
+            "body": 1,
+            "dof": 3,
+            "energy_derivative": -0.00043986054859210255,
+            "negative_wrench": -0.00043985775360111124,
+            "normalized_error": 2.794990991308952e-07,
+            "step": 1e-06
+          },
+          {
+            "absolute_error": 8.121747718803363e-11,
+            "body": 1,
+            "dof": 4,
+            "energy_derivative": -0.5946613153666458,
+            "negative_wrench": -0.5946613154478633,
+            "normalized_error": 1.3657770411190358e-10,
+            "step": 1e-06
+          },
+          {
+            "absolute_error": 1.3761947831314458e-10,
+            "body": 1,
+            "dof": 5,
+            "energy_derivative": -0.025621155430761988,
+            "negative_wrench": -0.02562115529314251,
+            "normalized_error": 5.371322096891541e-09,
+            "step": 1e-06
+          }
+        ],
+        "max_force_derivative_error_n": 2.1662739158045952e-07,
+        "max_normalized_derivative_error": 2.794990991308952e-07,
+        "max_torque_derivative_error_nm": 2.7949909913089523e-09,
+        "name": "largest_force",
+        "passed": true,
+        "reference_overlap_m3": 7.887303946681247e-06,
+        "reference_potential_j": 0.007365741161057167,
+        "same_material_partition_controls": [
+          {
+            "energy_error_j": 8.673617379884035e-19,
+            "force_error_n": 1.1725365339419248e-13,
+            "levels": [
+              1,
+              0
+            ],
+            "overlap_error_m3": 3.3881317890172014e-21,
+            "torque_error_nm": 3.414013175960929e-15
+          },
+          {
+            "energy_error_j": 8.673617379884035e-19,
+            "force_error_n": 1.1724547888980875e-13,
+            "levels": [
+              0,
+              1
+            ],
+            "overlap_error_m3": 1.0164395367051604e-20,
+            "torque_error_nm": 2.6439164888996984e-15
+          },
+          {
+            "energy_error_j": 0.0,
+            "force_error_n": 1.3145375116641554e-13,
+            "levels": [
+              1,
+              1
+            ],
+            "overlap_error_m3": 1.3552527156068805e-20,
+            "torque_error_nm": 2.7112772125678715e-15
+          }
+        ],
+        "selected_rank": 1
+      },
+      {
+        "colliders": [
+          [
+            658,
+            0
+          ],
+          [
+            659,
+            0
+          ]
+        ],
+        "finite_difference_derivatives": [
+          {
+            "absolute_error": 2.63058538840788e-09,
+            "body": 0,
+            "dof": 0,
+            "energy_derivative": -0.18415734029733621,
+            "negative_wrench": -0.18415733766675083,
+            "normalized_error": 2.63058538840788e-09,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 3.86578236089008e-09,
+            "body": 0,
+            "dof": 1,
+            "energy_derivative": 11.330329707254922,
+            "negative_wrench": 11.33032970338914,
+            "normalized_error": 3.4118886747088935e-10,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 3.7095795324404435e-08,
+            "body": 0,
+            "dof": 2,
+            "energy_derivative": -3.114627809149527,
+            "negative_wrench": -3.1146277720537316,
+            "normalized_error": 1.1910185613649205e-08,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 5.901031052690797e-11,
+            "body": 0,
+            "dof": 3,
+            "energy_derivative": 0.024563820298986738,
+            "negative_wrench": 0.02456382035799705,
+            "normalized_error": 2.402326253281544e-09,
+            "step": 1e-06
+          },
+          {
+            "absolute_error": 1.74668057795202e-11,
+            "body": 0,
+            "dof": 4,
+            "energy_derivative": 0.05440973319548875,
+            "negative_wrench": 0.054409733178021946,
+            "normalized_error": 3.2102355137018786e-10,
+            "step": 1e-06
+          },
+          {
+            "absolute_error": 5.5472626492303334e-11,
+            "body": 0,
+            "dof": 5,
+            "energy_derivative": 0.19696700571990647,
+            "negative_wrench": 0.1969670057753791,
+            "normalized_error": 2.8163410553930157e-10,
+            "step": 1e-06
+          },
+          {
+            "absolute_error": 2.6305862210751485e-09,
+            "body": 1,
+            "dof": 0,
+            "energy_derivative": 0.18415734029733621,
+            "negative_wrench": 0.18415733766675,
+            "normalized_error": 2.6305862210751485e-09,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 3.8655230127915274e-09,
+            "body": 1,
+            "dof": 1,
+            "energy_derivative": -11.330329707254922,
+            "negative_wrench": -11.330329703389399,
+            "normalized_error": 3.4116597774876706e-10,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 3.709572826693375e-08,
+            "body": 1,
+            "dof": 2,
+            "energy_derivative": 3.114627809149527,
+            "negative_wrench": 3.1146277720537987,
+            "normalized_error": 1.1910164083798835e-08,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 7.145939395769574e-11,
+            "body": 1,
+            "dof": 3,
+            "energy_derivative": -0.30970707608343406,
+            "negative_wrench": -0.30970707615489346,
+            "normalized_error": 2.30732196515771e-10,
+            "step": 1e-06
+          },
+          {
+            "absolute_error": 3.204817661250914e-11,
+            "body": 1,
+            "dof": 4,
+            "energy_derivative": -0.05502808429411199,
+            "negative_wrench": -0.055028084326160166,
+            "normalized_error": 5.823967344120963e-10,
+            "step": 1e-06
+          },
+          {
+            "absolute_error": 1.1247267006631034e-10,
+            "body": 1,
+            "dof": 5,
+            "energy_derivative": -0.18235688086128132,
+            "negative_wrench": -0.182356880973754,
+            "normalized_error": 6.167722844661844e-10,
+            "step": 1e-06
+          }
+        ],
+        "max_force_derivative_error_n": 3.7095795324404435e-08,
+        "max_normalized_derivative_error": 1.1910185613649205e-08,
+        "max_torque_derivative_error_nm": 1.1247267006631034e-10,
+        "name": "largest_torque",
+        "passed": true,
+        "reference_overlap_m3": 5.171262987625824e-06,
+        "reference_potential_j": 0.005342617413269991,
+        "same_material_partition_controls": [
+          {
+            "energy_error_j": 9.540979117872439e-18,
+            "force_error_n": 1.48611348077596e-13,
+            "levels": [
+              1,
+              0
+            ],
+            "overlap_error_m3": 1.9481757786848908e-20,
+            "torque_error_nm": 6.576958761535404e-15
+          },
+          {
+            "energy_error_j": 6.071532165918825e-18,
+            "force_error_n": 6.507058370928179e-14,
+            "levels": [
+              0,
+              1
+            ],
+            "overlap_error_m3": 4.235164736271502e-21,
+            "torque_error_nm": 4.699634517942094e-15
+          },
+          {
+            "energy_error_j": 1.3877787807814457e-17,
+            "force_error_n": 2.2293201619478266e-13,
+            "levels": [
+              1,
+              1
+            ],
+            "overlap_error_m3": 1.6940658945086007e-20,
+            "torque_error_nm": 8.657037004941346e-15
+          }
+        ],
+        "selected_rank": 2
+      },
+      {
+        "colliders": [
+          [
+            873,
+            0
+          ],
+          [
+            967,
+            0
+          ]
+        ],
+        "finite_difference_derivatives": [
+          {
+            "absolute_error": 3.7989704052811315e-21,
+            "body": 0,
+            "dof": 0,
+            "energy_derivative": -5.5402634509877004e-18,
+            "negative_wrench": -5.536464480582419e-18,
+            "normalized_error": 3.7989704052811315e-21,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 1.7767131077212627e-15,
+            "body": 0,
+            "dof": 1,
+            "energy_derivative": 2.204127452228227e-15,
+            "negative_wrench": 4.274143445069643e-16,
+            "normalized_error": 1.7767131077212627e-15,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 6.996562311571087e-17,
+            "body": 0,
+            "dof": 2,
+            "energy_derivative": 2.161748161760762e-16,
+            "negative_wrench": 1.4620919306036533e-16,
+            "normalized_error": 6.996562311571087e-17,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 2.8236267203063462e-18,
+            "body": 0,
+            "dof": 3,
+            "energy_derivative": -1.3628421587940769e-17,
+            "negative_wrench": -1.0804794867634422e-17,
+            "normalized_error": 2.8236267203063464e-16,
+            "step": 1e-06
+          },
+          {
+            "absolute_error": 1.805856490421427e-18,
+            "body": 0,
+            "dof": 4,
+            "energy_derivative": -1.1114963526372245e-17,
+            "negative_wrench": -9.309107035950819e-18,
+            "normalized_error": 1.805856490421427e-16,
+            "step": 1e-06
+          },
+          {
+            "absolute_error": 4.31232873793493e-17,
+            "body": 0,
+            "dof": 5,
+            "energy_derivative": 6.992753754812887e-17,
+            "negative_wrench": 2.6804250168779568e-17,
+            "normalized_error": 4.31232873793493e-15,
+            "step": 1e-06
+          },
+          {
+            "absolute_error": 3.799085836953921e-21,
+            "body": 1,
+            "dof": 0,
+            "energy_derivative": 5.5402634509877004e-18,
+            "negative_wrench": 5.5364643651507465e-18,
+            "normalized_error": 3.799085836953921e-21,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 1.776713107971802e-15,
+            "body": 1,
+            "dof": 1,
+            "energy_derivative": -2.204127452228227e-15,
+            "negative_wrench": -4.274143442564249e-16,
+            "normalized_error": 1.776713107971802e-15,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 6.996562307991064e-17,
+            "body": 1,
+            "dof": 2,
+            "energy_derivative": -2.161748161760762e-16,
+            "negative_wrench": -1.4620919309616557e-16,
+            "normalized_error": 6.996562307991064e-17,
+            "step": 1e-07
+          },
+          {
+            "absolute_error": 1.6278960301538484e-16,
+            "body": 1,
+            "dof": 3,
+            "energy_derivative": -2.043326798147555e-16,
+            "negative_wrench": -4.1543076799370666e-17,
+            "normalized_error": 1.6278960301538483e-14,
+            "step": 1e-06
+          },
+          {
+            "absolute_error": 1.4352808239186305e-18,
+            "body": 1,
+            "dof": 4,
+            "energy_derivative": 1.0058323402427362e-17,
+            "negative_wrench": 8.623042578508731e-18,
+            "normalized_error": 1.4352808239186303e-16,
+            "step": 1e-06
+          },
+          {
+            "absolute_error": 4.301056699192374e-17,
+            "body": 1,
+            "dof": 5,
+            "energy_derivative": -6.979148301808323e-17,
+            "negative_wrench": -2.6780916026159488e-17,
+            "normalized_error": 4.301056699192374e-15,
+            "step": 1e-06
+          }
+        ],
+        "max_force_derivative_error_n": 1.776713107971802e-15,
+        "max_normalized_derivative_error": 1.6278960301538483e-14,
+        "max_torque_derivative_error_nm": 1.6278960301538484e-16,
+        "name": "smallest_positive_overlap",
+        "passed": true,
+        "reference_overlap_m3": 1.0697901945781718e-22,
+        "reference_potential_j": 5.2839620357155736e-24,
+        "same_material_partition_controls": [
+          {
+            "energy_error_j": 1.1556321697132372e-33,
+            "force_error_n": 1.9434262803166523e-25,
+            "levels": [
+              1,
+              0
+            ],
+            "overlap_error_m3": 5.0439757297173864e-33,
+            "torque_error_nm": 2.176116215889156e-26
+          },
+          {
+            "energy_error_j": 1.205124889986671e-33,
+            "force_error_n": 1.4730475631335723e-25,
+            "levels": [
+              0,
+              1
+            ],
+            "overlap_error_m3": 2.1768039487397285e-33,
+            "torque_error_nm": 1.6416486266642133e-26
+          },
+          {
+            "energy_error_j": 5.491512877698325e-34,
+            "force_error_n": 1.0265639228926956e-25,
+            "levels": [
+              1,
+              1
+            ],
+            "overlap_error_m3": 7.901955144871614e-33,
+            "torque_error_nm": 1.1544403785514475e-26
+          }
+        ],
+        "selected_rank": 0
+      }
+    ],
+    "specified_pressure_scale_pa": 200000,
+    "strain_credit_j": 0.0
+  },
+  "broadphase_comparison": {
+    "all_reported_physical_values_identical": true,
+    "before_seconds": 33.47774094899999,
+    "after_seconds": 4.530452786999993,
+    "speed_ratio": 7.389491188400291,
+    "same_physical_json_sha256": "dc3d326ce69f5c00561e7e7d0db09127319003dfd3611981a548fb3237ae90f7",
+    "excluded_diagnostics": [
+      "candidate_rigid_tetrahedra",
+      "cpu_wall_seconds",
+      "input_rigid_tetrahedra",
+      "max_pair_wall_seconds",
+      "maximum_overlap_depth",
+      "maximum_subset_recursion_depth",
+      "subset_intersection_visits"
+    ]
+  },
+  "edge_work": {
+    "edge_work_error_j": 7.105427357601002e-15,
+    "initial_storage_j": 61.03515625,
+    "integrated_edge_work_j": 61.03515625000001,
+    "maximum_energy_error_j": 1.0658141036401503e-13,
+    "maximum_force_error_n": 1.2732925824820995e-11,
+    "simpson_intervals": 512,
+    "source": "manufactured held-depth finite punch; prescribed translation, no motion integrator or game step"
+  },
+  "edge_dataset": "2026-10-25-finite-edge.json",
+  "legacy_baseline": {
+    "baseline_reference_byte_exact": true,
+    "calibrated_soil": false,
+    "frequency_hz": 1000000.0,
+    "gameplay_adopted": false,
+    "limits": "A numerical per-effective-mass frequency sweep, not a material stiffness or closed global strain ledger. One saved outer step, no fresh/loaded bank, no FPS claim.",
+    "mechanical_gate_passed": false,
+    "mode": "baseline",
+    "normal_spring_energy_credit_j": 0.0,
+    "observer_after_state_byte_exact_in_memory": true,
+    "physical_mechanical_energy_gain_j": 57.216923396044876,
+    "preserve_normal_response": false,
+    "save_refused": false,
+    "unchanged_mechanical_gate_j": 0.01
+  },
+  "live_adoption": false,
+  "calibrated_soil": false,
+  "strain_credit_j": 0.0,
+  "native_app_sha256_unchanged": "72c3ba8e411c4ebc9295ba253269c8d4746fde47ca5353d46884b3640317b5fa",
+  "original_dirty_paths_and_stash_unchanged": true,
+  "crashes_unchanged": [
+    ".WindowServer-2026-09-24-144010.ips",
+    ".WindowServer-2026-09-27-124241.ips",
+    ".WindowServer-2026-09-27-141659.ips",
+    ".WindowServer-2026-09-29-195851.ips",
+    ".WindowServer-2026-10-08-155410.ips",
+    ".WindowServer-2026-10-19-135417.ips"
+  ],
+  "cleanup": "agent_browser: processes=0 rss_mib=0.0\nplaywright_tests: processes=0 rss_mib=0.0\nplaywright_mcp: processes=16 rss_mib=1.8\nchrome_for_testing: processes=0 rss_mib=0.0\nnode_ecosystem: processes=64 rss_mib=23.1\n",
+  "beads": {
+    "parent": "menace-sluice-normal-patch-coupling-20261025",
+    "parent_status": "in_progress",
+    "followups": [
+      "menace-6um",
+      "menace-ea8"
+    ],
+    "sync": "unsupported installed CLI; scoped literal export",
+    "existing_rows_changed": 1,
+    "new_rows": 2,
+    "other_literal_rows_preserved": 227,
+    "export_rows": 230
+  },
+  "limits": "Instantaneous force/energy reference only. No coupled finite-world motion, terrain volume, friction/yield/damping/motor/CCD integration, reference persistence, calibrated soil, clod-size convergence or real-time qualification."
+}

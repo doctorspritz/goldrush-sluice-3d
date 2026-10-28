@@ -1,0 +1,202 @@
+{
+  "artifact_root": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/settling-2026-10-22",
+  "source": {
+    "base": "34084e089845c262ac492bd4efaa6dc34430831d",
+    "files": {
+      "crates/game/src/gpu/heightfield/buffers.rs": "ffaa51385ea56f5453454ad5a7990252414a02d36e19d2eb1e064407c7dd0fc4",
+      "crates/game/src/gpu/heightfield/pipelines.rs": "d5101ebd536924f2aca00d9fa97af182ec797dbaf0b70c9d0347a105ecf452fe",
+      "crates/game/src/gpu/heightfield/simulation.rs": "18e364b7b96f7984bb6e70e27368c82d4115b2230f1dc9f8b7d23341c449da06",
+      "crates/game/src/gpu/shaders/heightfield_erosion.wgsl": "ac88c82b264e0d1c3a6f3396799ee4bc89e972dd6576fa7c44d8add6a8b4c4d2",
+      "crates/mining-physics/src/lib.rs": "52015ab8c8c39ae9cd505d8e59d6f6e871dec6726ad46f2f7d28c84deb63e3a7",
+      "crates/mining-physics/src/terrain.rs": "c0e05552f3aa248be62763e6446592da8f52e01694afa6c33793898c8e09c7ec",
+      "crates/mining-physics/tests/original_pipeline.rs": "367f0cde6724d4161041e7499f954a99729b283c79a5f0ca81de1fede84970f1",
+      "crates/mining-physics/tests/terrain_exchange.rs": "b9c46f38e486e31b61254825a56e446be76f6edf8b0d00cb1e0c2e0bff7e6f32",
+      "crates/mining-physics/tests/terrain_water.rs": "97e51fe9726d7a850cd9cd68576fe304a3cf9eca8704a9b3ea3aa813a6ebce55",
+      "crates/mining-sim/src/session.rs": "8b7eb93933a66eb2e092f61a5165cf5f1a712e41a9c83825cb52980ffff05762",
+      "crates/mining-sim/src/site.rs": "1010a16282075d6a4aa7a2c95a932eb88f66801754c60e1677c747168f449f59",
+      "crates/mining-sim/tests/bed_age.rs": "3c15a71d8686a083129c0988668b91a0a52ceb5acbdffda655b7d0a3874b3734"
+    },
+    "scope": "Physical-time terrain deposition, thin-cover scour, elapsed bed clock, persistent exchange roundoff feedback and v2/v3 save migration. All current source changes included.",
+    "binary_sha256": "85b8ec62c9a2b94e50050c421d6f945eb0c475691ad84f18a525a0684a57ed4c",
+    "app_path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/settling-2026-10-22/app/First Bend.app",
+    "feedback_storage_bytes": 262144
+  },
+  "checks": {
+    "cpu": {
+      "passed": 99,
+      "failed": 0,
+      "ignored": 39
+    },
+    "gpu": {
+      "passed": 38,
+      "failed": 0,
+      "ignored": 0
+    },
+    "strict_focused_clippy": true,
+    "package_and_scoped_formatting": true,
+    "signed_packaging": true
+  },
+  "benchmarks": {
+    "before": {
+      "mean_fps": 57.77503953230359,
+      "p95_frame_ms": 29.94725,
+      "simulation_wall_ratio": 0.6227429030671106,
+      "bulk_material_error_m3": 2.4629651420582377e-05,
+      "water_balance_error_m3": -6.62950637675408e-06,
+      "sluice_water_balance_error_m3": 0.0,
+      "gold_balance_error_g": 4.547473508864641e-12,
+      "passed": false,
+      "presentation_underruns": 0,
+      "water_mean_downstream_ms": 0.3815089762210846,
+      "water_particles": 118137,
+      "grains": 2975
+    },
+    "after": {
+      "mean_fps": 57.94701867865313,
+      "p95_frame_ms": 29.777333,
+      "simulation_wall_ratio": 0.6440006259285624,
+      "bulk_material_error_m3": 1.2428597415237164e-05,
+      "water_balance_error_m3": -8.164292722767641e-06,
+      "sluice_water_balance_error_m3": 0.0,
+      "gold_balance_error_g": 1.000444171950221e-11,
+      "passed": false,
+      "presentation_underruns": 4,
+      "water_mean_downstream_ms": 0.3791818916797638,
+      "water_particles": 117874,
+      "grains": 2675
+    }
+  },
+  "motion": {
+    "sluice": {
+      "frames": 44,
+      "wall_seconds": 3.946793583,
+      "simulation_wall_ratio": 0.6756539833322647,
+      "presentation_reversals": 0,
+      "nonadvancing_samples": 0,
+      "underruns_during_recording": 0,
+      "water_balance_error_m3": -7.933198808984798e-06,
+      "gold_balance_error_g": 6.821210263296962e-12
+    },
+    "outlet": {
+      "frames": 34,
+      "wall_seconds": 2.9328833750000003,
+      "simulation_wall_ratio": 0.6876055110251458,
+      "presentation_reversals": 0,
+      "nonadvancing_samples": 0,
+      "underruns_during_recording": 0,
+      "water_balance_error_m3": -7.899751075512995e-06,
+      "gold_balance_error_g": 8.185452315956354e-12
+    },
+    "river": {
+      "frames": 33,
+      "wall_seconds": 2.9613489590000004,
+      "simulation_wall_ratio": 0.6697398598515614,
+      "presentation_reversals": 0,
+      "nonadvancing_samples": 0,
+      "underruns_during_recording": 0,
+      "water_balance_error_m3": -7.809925435253717e-06,
+      "gold_balance_error_g": 1.1823431123048067e-11
+    },
+    "restore": {
+      "frames": 18,
+      "wall_seconds": 1.475574333,
+      "simulation_wall_ratio": 0.0,
+      "presentation_reversals": 0,
+      "nonadvancing_samples": 17,
+      "underruns_during_recording": 0,
+      "water_balance_error_m3": -8.164292722767641e-06,
+      "gold_balance_error_g": 1.000444171950221e-11,
+      "loaded_saved_time_exactly": true
+    }
+  },
+  "saved_state": {
+    "version": 3,
+    "unit": "microseconds",
+    "cells": 16384,
+    "maximum_age_us": 1500000,
+    "maximum_absolute_feedback_m": 8.821003e-10,
+    "feedback_global_m3": [
+      0.0,
+      2.3011785481385415e-11,
+      0.0,
+      5.5534676776455615e-11
+    ],
+    "save_bytes": 29630304,
+    "sim_time": 55.83333624526858,
+    "sha256": "a305d261df655954b09f67ea5a2734a47eefd0ff03583e379c777b0bff75303e"
+  },
+  "controls": {
+    "bed_tests": 17,
+    "stages_per_material": 20000,
+    "initial_mobile_m3": 1.920000104904176,
+    "final_residuals_m3": [
+      -1.589481790631e-08,
+      5.146235437792e-08,
+      2.90984072393e-08,
+      9.638992715111e-08
+    ],
+    "maximum_final_mobile_ppm": 0.05020308,
+    "dilute_maximum_relative_concentration_error": 1.106556832113e-06,
+    "long_residence_initial_remaining_fraction": 0.6513062887806194,
+    "long_residence_final_remaining_fraction": 4.477934288868e-08,
+    "coupled_concentration_errors": [
+      6.463328467321006e-06,
+      3.30893890709838e-06,
+      1.4956538543220432e-06
+    ],
+    "nonflat_erosion_f64_max_error_m": 3.839131720862e-09,
+    "flat_deposition_f64_max_error_m": 3.389840713686e-09,
+    "constant_forcing_max_error_m": 2.82167547383e-07
+  },
+  "video": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "width": 1440,
+        "height": 900,
+        "nb_frames": "112"
+      }
+    ],
+    "format": {
+      "duration": "10.097000"
+    }
+  },
+  "limitations": [
+    "Well-mixed noncohesive columns and existing terminal-speed/erosion parameters are not empirically calibrated.",
+    "Exchange retains a 1mm water-depth eligibility floor; thin-film drying/rewetting is tracked separately.",
+    "The elapsed 1.5s stability curve remains an uncalibrated proxy.",
+    "Grain mass/porosity/pore water, hindered settling, flocculation, exact local terrain-gold transport and constructed ponds remain open.",
+    "Both loaded benchmarks fail the combined real-time gate; the after run has four presentation underruns.",
+    "Native recordings are renderer-owned evidence, not a complete operator replay.",
+    "Detached water beads, grain stippling and opaque environmental water remain visible.",
+    "Full-workspace CI is not claimed green."
+  ],
+  "new_crash_reports": [],
+  "media_sha256": {
+    "png": "d1994517a401b124098ec107ef0c51e8860155f8ce7c7b7c938d2be55bc8db11",
+    "mp4": "83dbeb2c82634068245c36685d3905bb22dfd448aa78faa57df9141c5ecbfc92"
+  },
+  "verification_logs": [
+    "logs/outlet.log",
+    "logs/package.log",
+    "logs/restore.log",
+    "logs/river.log",
+    "logs/sluice-settling-baseline.log",
+    "logs/sluice-settling-budget-compensated.log",
+    "logs/sluice-settling-budget-nearest.log",
+    "logs/sluice-settling-budget-trace.log",
+    "logs/sluice-settling-encode.log",
+    "logs/sluice-settling-first.log",
+    "logs/sluice-settling-gpu-all.log",
+    "logs/sluice-settling-gpu-verified.log",
+    "logs/sluice-settling-long-baseline.log",
+    "logs/sluice-settling-native-after.log",
+    "logs/sluice-settling-native-before.log",
+    "logs/sluice-settling-quality.log",
+    "logs/sluice-settling-terrain-final.log",
+    "logs/sluice-settling-terrain-refined.log",
+    "logs/sluice-settling-terrain-stored.log",
+    "logs/sluice.log"
+  ]
+}

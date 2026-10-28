@@ -37,6 +37,10 @@ struct Params {
 @group(0) @binding(4) var<storage, read_write> grid_v: array<f32>;
 @group(0) @binding(5) var<storage, read_write> grid_w: array<f32>;
 
+@group(0) @binding(6) var<storage,read> mobility_u:array<f32>;
+@group(0) @binding(7) var<storage,read> mobility_v:array<f32>;
+@group(0) @binding(8) var<storage,read> mobility_w:array<f32>;
+
 // Cell type constants (matching sluice_3d_visual convention)
 const CELL_AIR: u32 = 0u;
 const CELL_FLUID: u32 = 1u;
@@ -86,6 +90,10 @@ fn get_cell_type(i: i32, j: i32, k: i32) -> u32 {
     if (u32(j) >= params.height) {
         return select(CELL_SOLID, CELL_AIR, open_pos_y);
     }
+    if PERIODIC_Z {
+        let n=i32(params.depth);let layer=((k%n)+n)%n;
+        return cell_type[cell_index(u32(i),u32(j),u32(layer))];
+    }
     // -Z boundary (side wall)
     if (k < 0) {
         return select(CELL_SOLID, CELL_AIR, open_neg_z);
@@ -99,15 +107,17 @@ fn get_cell_type(i: i32, j: i32, k: i32) -> u32 {
 }
 
 fn get_pressure(i: i32, j: i32, k: i32) -> f32 {
-    if (i < 0 || j < 0 || k < 0 ||
-        u32(i) >= params.width || u32(j) >= params.height || u32(k) >= params.depth) {
+    var layer=k;
+    if PERIODIC_Z {let n=i32(params.depth);layer=((k%n)+n)%n;}
+    if (i < 0 || j < 0 || layer < 0 ||
+        u32(i) >= params.width || u32(j) >= params.height || u32(layer) >= params.depth) {
         return 0.0;
     }
-    let ct = cell_type[cell_index(u32(i), u32(j), u32(k))];
+    let ct = cell_type[cell_index(u32(i), u32(j), u32(layer))];
     if (ct != CELL_FLUID) {
         return 0.0;  // Air and solid have zero pressure
     }
-    return pressure[cell_index(u32(i), u32(j), u32(k))];
+    return pressure[cell_index(u32(i), u32(j), u32(layer))];
 }
 
 // Apply pressure gradient to U velocity component
@@ -158,7 +168,7 @@ fn apply_gradient_u(@builtin(global_invocation_id) id: vec3<u32>) {
     let p_right = get_pressure(i32(i), i32(j), i32(k));
     let p_left = get_pressure(i32(i) - 1, i32(j), i32(k));
 
-    grid_u[idx] = grid_u[idx] - (p_right - p_left) * params.inv_cell_size;
+    grid_u[idx] = grid_u[idx] - face_mobility(0u,idx) * (p_right - p_left) * params.inv_cell_size;
 }
 
 // Apply pressure gradient to V velocity component
@@ -208,7 +218,7 @@ fn apply_gradient_v(@builtin(global_invocation_id) id: vec3<u32>) {
     let p_top = get_pressure(i32(i), i32(j), i32(k));
     let p_bottom = get_pressure(i32(i), i32(j) - 1, i32(k));
 
-    grid_v[idx] = grid_v[idx] - (p_top - p_bottom) * params.inv_cell_size;
+    grid_v[idx] = grid_v[idx] - face_mobility(1u,idx) * (p_top - p_bottom) * params.inv_cell_size;
 }
 
 // Apply pressure gradient to W velocity component
@@ -221,6 +231,25 @@ fn apply_gradient_w(@builtin(global_invocation_id) id: vec3<u32>) {
     let k = id.z;  // 0 to depth (inclusive)
 
     if (i >= params.width || j >= params.height || k > params.depth) {
+        return;
+    }
+
+    if PERIODIC_Z {
+        // Only one invocation owns the seam. Computing the depth copy in a
+        // separate invocation would race a read of canonical W0 against its write.
+        if k==params.depth {return;}
+        let face=w_index(i,j,k);
+        let back=get_cell_type(i32(i),i32(j),i32(k)-1);
+        let front=get_cell_type(i32(i),i32(j),i32(k));
+        var velocity=grid_w[face];
+        if back==CELL_SOLID || front==CELL_SOLID {velocity=0.;}
+        else if back==CELL_FLUID || front==CELL_FLUID {
+            let p0=get_pressure(i32(i),i32(j),i32(k)-1);
+            let p1=get_pressure(i32(i),i32(j),i32(k));
+            velocity-=face_mobility(2u,face)*(p1-p0)*params.inv_cell_size;
+        }
+        grid_w[face]=velocity;
+        if k==0u {grid_w[w_index(i,j,params.depth)]=velocity;}
         return;
     }
 
@@ -258,5 +287,5 @@ fn apply_gradient_w(@builtin(global_invocation_id) id: vec3<u32>) {
     let p_front = get_pressure(i32(i), i32(j), i32(k));
     let p_back = get_pressure(i32(i), i32(j), i32(k) - 1);
 
-    grid_w[idx] = grid_w[idx] - (p_front - p_back) * params.inv_cell_size;
+    grid_w[idx] = grid_w[idx] - face_mobility(2u,idx) * (p_front - p_back) * params.inv_cell_size;
 }

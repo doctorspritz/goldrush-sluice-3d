@@ -1,0 +1,334 @@
+{
+  "base_commit": "e8addf07bb2aa2c89de3146ee14d0f8eb46a0dc1",
+  "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/digging-guide-20261024",
+  "changed_build_sources": {
+    "crates/mining-sim/src/articulation.rs": {
+      "before": "eb205bf64b2b61aeb51ca23ead2c45091794bd30dc63dbbf9315ffe580c21bec",
+      "after": "0cf89af4c704b6504888200c676bdf1ba3f791882fcf877f0a3521e2feb001cf"
+    },
+    "crates/mining-sim/src/bucket.rs": {
+      "before": "ffc21e0f9e3311b3ad1c6b4c6609a215bb23f95cd810763b0bf1bfe3b7cf8fb8",
+      "after": "10a5b07283b522d811b56fc4bccb98ea9468def37ffe77e59604139f48a5ce4e"
+    },
+    "crates/mining-sim/src/replay.rs": {
+      "before": "52d2fe253731a0e5604c7697d92973a4b68ee58218d74bd08d0f49ef6bef5c80",
+      "after": "373fabbe1bf682be1273f563ea48ae86c7527f4d4436a6a835d013048d5c8cdd"
+    },
+    "crates/mining-sim/src/session.rs": {
+      "before": "1917e59c986e9c2445f0e4d8058fb177963cb22ee017bb838ce5c9a20bb1f70b",
+      "after": "ffc687f0e3cd80e256da2c686f4d95fa88d8f86b1a979ad229875143e9671813"
+    },
+    "crates/mining-sim/src/soil.rs": {
+      "before": "7459024a1ff52d58a86b318ebbf3c8198879e69fdd2bf3be1afde838b6c0d235",
+      "after": "bb615f8166406eca5ce2bf0a80def372393ef5e4ff949b5e5129c6bf1fcf5b7f"
+    },
+    "crates/mining-sim/tests/articulation.rs": {
+      "before": "ac1ae7e8520e5c15d0a8eeb7f961d1c0aa309a7a30d05c2ca3845317a15d2ddb",
+      "after": "ee286139db2f2f17bbe8984e16ee91689cacffd08db5f2a5b95c7284523e6a45"
+    },
+    "crates/mining-sim/tests/soil.rs": {
+      "before": "9d4eb9f21db664c8d322d6e57afc1e570726d30aa0248f27b4d18844509c4636",
+      "after": "10038a1c9ef5834bc01cb77c64cf6f9713193780fe653c1a3f7da0cacd9e904d"
+    },
+    "crates/mining/src/motion_capture.rs": {
+      "before": "21af19d1f73a39c03e3c019466d7e3f6b307d6cdb7de913476e1a01f872bcbb3",
+      "after": "b580d5936ba5828acf88b7f5b677f2f867209ffb6a4c456c2589e2a06be80619"
+    }
+  },
+  "unchanged_build_sources": 732,
+  "final_source_manifest_sha256": "1c42c88ee50f1829e6b0338bdd294d1049e47dd3603c1022266bf20bed8add6f",
+  "source_soil_bank_material": {
+    "gold_g": 5.254391689276078,
+    "gravel_m3": 0.2500000176951288,
+    "pore_water_m3": 0.0,
+    "sand_m3": 0.0,
+    "soil_m3": 0.31250000465661265
+  },
+  "cpu_minimum_held_litres": 4.218750167638063,
+  "native": {
+    "source_frames": 161,
+    "wall_seconds": 161.204911,
+    "sim_seconds": 17.666667588055134,
+    "physical_advances": 160,
+    "held_litres": 14.062500558793545,
+    "final_litres": 0.0,
+    "max_chassis_tilt_deg": 3.999488115310669,
+    "all_1040_bodies_preserved": true,
+    "all_source_material_preserved": true,
+    "fully_below_terrain_25mm": 0,
+    "water_full_rgb_identical": true,
+    "water_frozen_fields": [
+      "sim_time",
+      "fluid_clock",
+      "solver_steps",
+      "tracks",
+      "machine",
+      "excavated_m3",
+      "delivered_m3",
+      "flow",
+      "surface",
+      "active_soil",
+      "material_motion"
+    ],
+    "water_benchmark": {
+      "mean_fps": 55.68240108807396,
+      "p95_frame_ms": 26.13625,
+      "simulation_wall_ratio": 0.32142366103947234,
+      "passed": false,
+      "bulk_budget_passed": true,
+      "dry_mass_budget_passed": true,
+      "water_balance_error_m3": -7.818506364998257e-06,
+      "sluice_water_balance_error_m3": 0.0,
+      "gold_balance_error_g": 1.3642420526593924e-12
+    },
+    "bank_benchmark": {
+      "mean_fps": 55.86365236535505,
+      "p95_frame_ms": 19.231791,
+      "simulation_wall_ratio": 0.07495490854257715,
+      "passed": false,
+      "bulk_budget_passed": true,
+      "dry_mass_budget_passed": true,
+      "water_balance_error_m3": 1.850804309810883e-08,
+      "sluice_water_balance_error_m3": 0.0,
+      "gold_balance_error_g": 0.0
+    },
+    "video_probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "r_frame_rate": "30/1",
+          "duration": "163.166667",
+          "nb_frames": "4895"
+        }
+      ]
+    },
+    "review_indices": [
+      15,
+      35,
+      58,
+      89,
+      127,
+      158
+    ],
+    "review_sim_times": [
+      1.5166667457669973,
+      3.4833335150033236,
+      5.950000310316682,
+      9.483333827927709,
+      13.950000727549195,
+      17.78333426080644
+    ],
+    "whole_video_watched": false,
+    "manual_OS_input_checked": false,
+    "delivered_media": {
+      "docs/playtests/2026-10-24-actuator-relief.png": "0d7c98ffea932bf6b1a5f560406176d769f779aa96a7e486caf98485cfc494ef",
+      "docs/playtests/2026-10-24-actuator-relief.motion.png": "132a5379e2e44a22a046f832d25022fb045d34e07beb77207b2a57bc2d4457c4",
+      "docs/playtests/2026-10-24-actuator-relief.mp4": "e427a148b71b10b4d825aef40e70fd8364f6ed05ebe2ad9122a11471f35acff4"
+    }
+  },
+  "native_whole_budgets": {
+    "bulk_error_m3": 7.537215651609586e-08,
+    "dry_mass_error_kg": 0.0001356586581096053,
+    "water_error_m3": 5.7512524520575425e-08,
+    "gold_error_g": 7.73070496506989e-12
+  },
+  "cpu_checks_passed": 238,
+  "explicit_actual_gpu_pipeline_checks": 5,
+  "native_input_checks": 18,
+  "scope": "Maintained mining/mining-sim/mining-physics only; other ignored GPU suites and full-workspace gates not claimed. Three unchanged long physical cases are reused from their successful sequential runs; final library and app cases rerun.",
+  "quality": [
+    {
+      "name": "maintained-final-cpu",
+      "exit": 0
+    },
+    {
+      "name": "final-clippy",
+      "exit": 0
+    },
+    {
+      "name": "final-format",
+      "exit": 0
+    },
+    {
+      "name": "final-original-gpu",
+      "exit": 0
+    },
+    {
+      "name": "final-package",
+      "exit": 0
+    }
+  ],
+  "primary_physical_binary": {
+    "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/digging-guide-20261024/physical-app/First Bend.app/Contents/MacOS/mining",
+    "sha256": "e872a5ef8863252c2363912d2261f5f1ea8f72f3754515c59509d0a3c38ce6dd",
+    "same_executable_as_full_native_cycle": true
+  },
+  "final_inspection_binary": {
+    "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/digging-guide-20261024/review-app/First Bend.app/Contents/MacOS/mining",
+    "sha256": "a7840bac197c4df4d6b62967e7e919916e018e4ea4e9d5e6fa307a46322cc280",
+    "only_source_difference_from_physical_build": [
+      "crates/mining/src/motion_capture.rs"
+    ],
+    "physics_build": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/digging-guide-20261024/physical-app/First Bend.app/Contents/MacOS/mining",
+      "sha256": "e872a5ef8863252c2363912d2261f5f1ea8f72f3754515c59509d0a3c38ce6dd",
+      "same_executable_as_full_native_cycle": true
+    }
+  },
+  "legacy_compatibility": {
+    "candidate_library_sha256": "8c50d4adf539d166c10329999e47e8b112e598861f9f0f8a674dba10bb41370f",
+    "probe_source_sha256": "bb4fe4fb08a74838a957d9a454d7f06cce4446acb7ae38d744ef73088b60978b",
+    "probe_sha256": "519271174f99269a8d665ed31f14eb71dc7aa87a323b6739878b3b653b0de45f",
+    "versions": [
+      {
+        "version": 7,
+        "snapshots": 6,
+        "bytes": 8298756,
+        "sha256": "75877591056ff687e29adee0dccdfc927a44266ac10d0f842e7af23a74a2b04e",
+        "input_sha256": "8534efc738f4e14f2ac8eb1202161ba637a6a6ba44e9c5927c6e5a60e1c2b35d",
+        "identical_to_verified_old_executable": true
+      },
+      {
+        "version": 8,
+        "snapshots": 6,
+        "bytes": 20686640,
+        "sha256": "7a491052096b2982433503092b01272ce1bfa4a4e05c99f26a9b6fe72cb37207",
+        "input_sha256": "2fd8cfa0abe58ad32d19240d821c544293c55186b68efa457d784b84fc0d1f67",
+        "identical_to_verified_old_executable": true
+      },
+      {
+        "version": 9,
+        "snapshots": 6,
+        "bytes": 22177159,
+        "sha256": "ab82bb33ff05105ee3f498f7450245ca71a29167d1663bf497510992261bacb5",
+        "input_sha256": "3bd2c181f1cee3cdc18860ebaff2e9418e8d546890a6e56283fcaa2e3b4f3085",
+        "identical_to_verified_old_executable": true
+      },
+      {
+        "version": 10,
+        "snapshots": 6,
+        "bytes": 22207495,
+        "sha256": "692e5ef18caa7fa29a4084ebdbb289af4feb07c7c580b8e6a3549690a619b97f",
+        "input_sha256": "31a1b838084667d112968f2c5a7acb834651bebdbd5a03474f0666a6fb950928",
+        "identical_to_verified_old_executable": true
+      }
+    ],
+    "baseline_executed_in_prior_rotation_checkpoint": true
+  },
+  "restore_checks": {
+    "physical": [
+      {
+        "f32_values_checked": 32320,
+        "exact_other_values_checked": 18752,
+        "machine_checked": true,
+        "clods_fully_checked": 1040
+      },
+      {
+        "f32_values_checked": 32320,
+        "exact_other_values_checked": 18752,
+        "machine_checked": true,
+        "clods_fully_checked": 1040
+      },
+      {
+        "f32_values_checked": 32320,
+        "exact_other_values_checked": 18752,
+        "machine_checked": true,
+        "clods_fully_checked": 1040
+      },
+      {
+        "f32_values_checked": 32320,
+        "exact_other_values_checked": 18752,
+        "machine_checked": true,
+        "clods_fully_checked": 1040
+      }
+    ],
+    "clear_camera": [
+      {
+        "f32_values_checked": 32320,
+        "exact_other_values_checked": 18752,
+        "machine_checked": true,
+        "clods_fully_checked": 1040
+      },
+      {
+        "f32_values_checked": 32320,
+        "exact_other_values_checked": 18752,
+        "machine_checked": true,
+        "clods_fully_checked": 1040
+      },
+      {
+        "f32_values_checked": 32320,
+        "exact_other_values_checked": 18752,
+        "machine_checked": true,
+        "clods_fully_checked": 1040
+      },
+      {
+        "f32_values_checked": 32320,
+        "exact_other_values_checked": 18752,
+        "machine_checked": true,
+        "clods_fully_checked": 1040
+      }
+    ]
+  },
+  "initial_geometry": {
+    "hull_pairs": 16486,
+    "worst_registered_overlap_m": 1.2740492820739746e-06,
+    "worst_substrate_overlap_m": 1.1920928955078125e-07,
+    "unchanged_geometry_limit_m": 1e-05,
+    "clipped_contact_estimate_m": -1.7196806e-05,
+    "clipped_estimate_fixed": false,
+    "known_real_overlap_negative_controls_m": [
+      2e-05,
+      0.0001
+    ]
+  },
+  "operator_geometry": {
+    "bank_grade_degrees": 15.043608,
+    "old_tooth_above_first_shell_contact_m": 0.030960977,
+    "bank_aligned_gap_m": 0.00090938807,
+    "entry_rake_rad": 1.3738084,
+    "draw_rad": 0.5,
+    "attack_below_bank_rad": 0.08,
+    "contact_cue_fraction_of_declared_force": 0.1,
+    "physical_pose_or_material_injection": false
+  },
+  "known_unresolved_convergence": {
+    "same_old_1080_command_tape_sha256": "282d4f7792a9dc3990eb6a263bce6019b739987aee157eae6307f09362d1f2e3",
+    "old_narrow_bank_held_litres_240_480": [
+      0.585937523,
+      4.101562663
+    ],
+    "symmetric_difference_percent": 150.0,
+    "sampled_tooth_path_difference_m": 0.1165886,
+    "new_native_and_cpu_are_not_matched_input_or_productivity_comparisons": true
+  },
+  "free_response_logs": {
+    "before-free-repeat.log": {
+      "sha256": "288631c67915fa9bf7fd16131b1725ca66197a66e8ccbfc3c0bb335727750629",
+      "text": "FREE CURL hz=120 initial=-0.2 final=-0.48841888 displacement=-0.2884189 reference=-0.48915124 joint_rate=-0.1747809 pump_j=29999.913827002954 heat_j=18834.65166694648 mean_fraction=0.6548994536201159\nFREE CURL hz=240 initial=-0.2 final=-0.6051743 displacement=-0.40517431 reference=-0.6066212 joint_rate=-0.33241722 pump_j=29999.760983580585 heat_j=11403.479794193248 mean_fraction=0.6537961309154828\nFREE CURL hz=480 initial=-0.2 final=-0.6950555 displacement=-0.4950555 reference=-0.69715846 joint_rate=-0.46418622 pump_j=29971.93072657615 heat_j=3999.50475365472 mean_fraction=0.6232522378365198\nFREE CURL hz=960 initial=-0.2 final=-0.73915595 displacement=-0.53915596 reference=-0.7416492 joint_rate=-0.53014696 pump_j=29970.013761044742 heat_j=0 mean_fraction=0.6018546798576911\n"
+    },
+    "final-free-actuator.log": {
+      "sha256": "055e4f44e6a999be89e133c654e50500f5c235fb59b15c8c444e34401f43863d",
+      "text": "FREE CURL hz=120 initial=-0.2 final=-0.7378684 displacement=-0.53786844 reference=-0.7392322 joint_rate=-0.32678947 pump_j=29999.829709087575 heat_j=0 mean_fraction=0.599149610598882\nFREE CURL hz=240 initial=-0.2 final=-0.7350189 displacement=-0.5350189 reference=-0.7369296 joint_rate=-0.44007447 pump_j=29999.6896769678 heat_j=0 mean_fraction=0.5965939583877723\nFREE CURL hz=480 initial=-0.2 final=-0.7344284 displacement=-0.5344284 reference=-0.73669887 joint_rate=-0.5013831 pump_j=29971.997488100074 heat_j=0 mean_fraction=0.5963431278864543\nFREE CURL hz=960 initial=-0.2 final=-0.73915595 displacement=-0.53915596 reference=-0.7416492 joint_rate=-0.53014696 pump_j=29970.013761044742 heat_j=0 mean_fraction=0.6018546798576911\n"
+    }
+  },
+  "saved_water_input_sha256": "32acd1d5e9873f67f628df283712eca96c318a2f07780e1720fc6eaff0310e42",
+  "launcher": {
+    "tracked_path": "Play Soil Contact Trial.command",
+    "sha256": "c6aa72c1de943227218fcdd1e9e817800f440380e60992eebb713cfaad3562c6",
+    "syntax_checked": true,
+    "separate_save_slot": "saves/soil-contact-trial.json",
+    "prebuilt_local": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/digging-guide-20261024/Play Soil Trial.command"
+  },
+  "failed_evidence": {
+    "cpu-scoop.log": "d890377a6fe24ac592f0b019a875a9f362c997544ffec4dd2c74ac539f55186d",
+    "cpu-contact-scoop.log": "b05dca0fbe9d1058b96e9c5a49c6c9179a09bc740b65c691e067a2a3683f1548",
+    "cpu-slope-scoop.log": "a19bfc75bf4273dd304612084f76f90bdcb1af9217a126d849b5c68d94dffe1f",
+    "initial-contact-diagnostic.log": "bdc4350a064edc010b24433d7306f76bfe455c3fe758d6c91b9131b36a025d25",
+    "initial-contact-sat.log": "bf81cbf8907663d5bd9bf8a98766741e10372f723173d04ca1615eab19350ae3",
+    "maintained-cpu.log": "86108dd3f6405aada2ac45fba6589bfac8893ce71105b73deff54df7b1aac854"
+  },
+  "remaining": "Bulk/contact and joint-rate convergence, general continuous excavation, calibrated wet/cohesive mud, compaction/pads, shaker decks, coupled buildup, constructed settling/water circuits, graphics and physical realtime.",
+  "full_goal_complete": false,
+  "cleanup_output_sha256": "4ee2e9ad1d1cf7f4cb0b7bc81d16d88f2e467dc703e430a1d0247e78eccbb8db"
+}

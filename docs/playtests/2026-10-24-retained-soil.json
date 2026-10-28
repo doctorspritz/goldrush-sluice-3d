@@ -1,0 +1,946 @@
+{
+  "scope": "Stage2 retained-world mechanical experiment; not enabled in Session/gameplay",
+  "source_baseline": "24532151ad798d4a16fee80723690db3b4508c55",
+  "quality": [
+    {
+      "name": "default-replay-build",
+      "exit": 0
+    },
+    {
+      "name": "default-full-replay",
+      "exit": 0
+    },
+    {
+      "name": "maintained-cpu",
+      "exit": 0
+    },
+    {
+      "name": "original-gpu",
+      "exit": 0
+    },
+    {
+      "name": "default-clippy",
+      "exit": 0
+    },
+    {
+      "name": "format-check",
+      "exit": 0
+    }
+  ],
+  "featured_quality": [
+    {
+      "name": "format",
+      "exit": 0
+    },
+    {
+      "name": "featured-lib",
+      "exit": 0
+    },
+    {
+      "name": "featured-clippy",
+      "exit": 0
+    },
+    {
+      "name": "featured-replay-build",
+      "exit": 0
+    }
+  ],
+  "maintained_checks": {
+    "passed": 238,
+    "failed": 0,
+    "ignored": 93,
+    "suites": 44
+  },
+  "feature_lib_tests": {
+    "passed": 26,
+    "ignored": 0
+  },
+  "explicit_original_gpu_tests": 5,
+  "native": {
+    "binary_sha256": "8f3dc06ff746b4b6c8d644e8ce3bf5a89b390ff6181284e759a18df7611c9872",
+    "before_binary_sha256": "862032d4706c5d0053878dc3dcb198a777216872d68d2c3cafca41b2b481fe1a",
+    "native_input_checks": 18,
+    "bank_full_rgb_identical": true,
+    "water_full_rgb_identical": true,
+    "frozen_fields": [
+      "sim_time",
+      "fluid_clock",
+      "solver_steps",
+      "tracks",
+      "flow",
+      "surface",
+      "machine",
+      "excavated_m3",
+      "delivered_m3",
+      "active_soil",
+      "material_motion"
+    ],
+    "legacy": [
+      {
+        "version": 7,
+        "snapshots": 6,
+        "sha256": "75877591056ff687e29adee0dccdfc927a44266ac10d0f842e7af23a74a2b04e"
+      },
+      {
+        "version": 8,
+        "snapshots": 6,
+        "sha256": "7a491052096b2982433503092b01272ce1bfa4a4e05c99f26a9b6fe72cb37207"
+      },
+      {
+        "version": 9,
+        "snapshots": 6,
+        "sha256": "ab82bb33ff05105ee3f498f7450245ca71a29167d1663bf497510992261bacb5"
+      },
+      {
+        "version": 10,
+        "snapshots": 6,
+        "sha256": "692e5ef18caa7fa29a4084ebdbb289af4feb07c7c580b8e6a3549690a619b97f"
+      }
+    ],
+    "legacy_probe_sha256": "aba6382d3539b32889b9951670f1ed62cd17c7e46b20d74588ab2498796f4c77",
+    "legacy_library_sha256": "9e24daee900e3874ec6a01a888e69b3802b97e6b4344ae80357c73c0c06573ff",
+    "manual_OS_input_checked": false,
+    "new_native_performance_measured": false
+  },
+  "default_replay": {
+    "identical_complete_states": [
+      {
+        "file": "tick-0000.json",
+        "sha256": "30bc0c9377c7a5c323c43f4743fb2ec008014ffe4a563fa8dafbae4eb3312631"
+      },
+      {
+        "file": "tick-0060.json",
+        "sha256": "320b7269b3ac16dec93455983ec1e1b1c3efe051e29c13c74221ee45d71cae39"
+      },
+      {
+        "file": "tick-0120.json",
+        "sha256": "7117044a75d363efeafc18ffb7c6ce8bfe4116670d9e1f1b604acf9b126cc311"
+      },
+      {
+        "file": "tick-0180.json",
+        "sha256": "9cdbf3dcc14a0b077b040e78d9c6e0bae53e6d6cc592971ebe2f4327370b2a3b"
+      },
+      {
+        "file": "tick-0240.json",
+        "sha256": "fd88c2f1185f9908cb5c8e5231ed0e1672f38edc0e56573702c8b9a91d59aed0"
+      },
+      {
+        "file": "tick-0300.json",
+        "sha256": "72850698fcd1f2f5dbecee302fd2474aa5b164a08010c9601e82befaf21b6477"
+      },
+      {
+        "file": "tick-0360.json",
+        "sha256": "cb8e7dfdef9fee7368d16df87d016839451e65855e06b5194296159a9dc2e4ee"
+      },
+      {
+        "file": "tick-0420.json",
+        "sha256": "55e42e1fc0b18b1eae4f7b8fc7973f7cf08c7b9d648389257f2a56033ed30eff"
+      },
+      {
+        "file": "tick-0480.json",
+        "sha256": "28be5bf39c28089c1fdb1ecb77a69fe4f8af4649953eedbb263ab3d881d84cf1"
+      },
+      {
+        "file": "tick-0540.json",
+        "sha256": "c137c466df4eb072e9d1126d73058ad8148f428dd1f2d6a675a074fdb9520e54"
+      },
+      {
+        "file": "tick-0600.json",
+        "sha256": "c8812a46bee9233167d7bdb1b29f46483620945e211f4b83344a7a0f6b9a5557"
+      },
+      {
+        "file": "tick-0660.json",
+        "sha256": "0ae14d5660b400d61057d14d7a6e2a641e5e8b8f095dfcc871d5a74695bf884a"
+      },
+      {
+        "file": "tick-0720.json",
+        "sha256": "0ea62ea7253f56b1e10305a846d273f90cff2b8cf62e2665aa1145cd404d2038"
+      },
+      {
+        "file": "tick-0780.json",
+        "sha256": "7a504011b697a01043d5029cf1a3f9bba979177307ef5f5fc6001ac8ec0aa84f"
+      },
+      {
+        "file": "tick-0840.json",
+        "sha256": "4f0392e1103718a2d16510c4f4fcd7e542c1070700b6688bb89b53b52091013c"
+      },
+      {
+        "file": "tick-0900.json",
+        "sha256": "c000c42829066c9b319c191569a917e59a740276d16fe85578779f35925146ff"
+      },
+      {
+        "file": "tick-0960.json",
+        "sha256": "aec01495e8ac01a46c90b9d35e1d3006b6de78d24bc8a015ae58d60befec5c17"
+      },
+      {
+        "file": "tick-1020.json",
+        "sha256": "de4f716cb87bccdd016bb94cf473626e8e18920ebbcb8adfb5524759c42dd444"
+      },
+      {
+        "file": "tick-1080.json",
+        "sha256": "52f2e6f1f77d783a24b419531dc48800a62e95b9bac8db84a2d9adeeac5d142e"
+      }
+    ],
+    "metrics": {
+      "clods": 1040,
+      "completed": true,
+      "final_held_estimate_m3": 0.0,
+      "final_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "initial_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "max_held_estimate_m3": 0.004218750167638063,
+      "mechanical_hz": 240,
+      "scope": "CPU mechanics; no GPU terrain/water updates",
+      "sim_time": 18.000000938773155,
+      "simulated_seconds": 18.000000938773155,
+      "start_sim_time": 0.0,
+      "step_wall_seconds": 161.5568581889999,
+      "ticks": 1080,
+      "total_wall_seconds": 161.860927125
+    }
+  },
+  "cold_scene": {
+    "matched_states": [
+      {
+        "file": "tick-0000.json",
+        "sha256": "5d1b8087f687fd17724c9472bbbd057fbe959f5a01147b90e74432e6e8465bd0"
+      },
+      {
+        "file": "tick-0060.json",
+        "sha256": "ae4ef0d0108f1bdc2e377d68dceadc7aa05e332d66f79f9d3d9a63a8f764b07f"
+      },
+      {
+        "file": "tick-0120.json",
+        "sha256": "5b47a0a8e767c0b96528ed91862bedf6ec091abdc31d57124adb0005581ae3c2"
+      },
+      {
+        "file": "tick-0180.json",
+        "sha256": "86277435d0a5edfe36fea48873eadbf265798945967d11e5c1fdd413b3ce219c"
+      },
+      {
+        "file": "tick-0240.json",
+        "sha256": "7d9a95ff243293a10f3d6a4a9ad8de2938684cb9aa2e126e15e2317cc33e0512"
+      },
+      {
+        "file": "tick-0300.json",
+        "sha256": "436db948333027d0a0afe80d35abe445685d13a8bfe4f28e48e2e94f2a87dfa3"
+      },
+      {
+        "file": "tick-0360.json",
+        "sha256": "f2e29c5a4a9014451c67051307905612058a35c77ff7ee7a08d02b99ed90896e"
+      },
+      {
+        "file": "tick-0420.json",
+        "sha256": "f862d923fa30698a301e649ba2ae4e2c9042f834c3c927a48b0f09570bab6309"
+      },
+      {
+        "file": "tick-0480.json",
+        "sha256": "1aa73fda00b18718508c44ec81a7d6480e420a0a4399d38e26aeaea603ad4fa7"
+      },
+      {
+        "file": "tick-0540.json",
+        "sha256": "e9ad1d37e12364365fae6758023af8f4f714d4c79f122ad665344b2775543236"
+      },
+      {
+        "file": "tick-0600.json",
+        "sha256": "c695edf006cb22f071d73aa646091182baf6d7404c3cc96b709409233efb254c"
+      },
+      {
+        "file": "tick-0660.json",
+        "sha256": "506b5038ad9adf259433ea98be8aef6fe2e72d752b3611127e3ff7af794f1fbd"
+      },
+      {
+        "file": "tick-0720.json",
+        "sha256": "164be5222dc80c3c5fae7c11793a92746eee64e784aee2798e068fc289e91702"
+      },
+      {
+        "file": "tick-0780.json",
+        "sha256": "3b442dcae7643675f7380f4a804db9a91a4e07ced7dcacd37a15bccb65c4a0d7"
+      },
+      {
+        "file": "tick-0840.json",
+        "sha256": "516245fcf1cafdb42451c101b876bc131d8cfdff9e64f462aec3b71c96d420f4"
+      },
+      {
+        "file": "tick-0900.json",
+        "sha256": "bc4043eae07162018c3309a4885ed4db6b57d605bf3741f1ae7fbd7f79238a50"
+      },
+      {
+        "file": "tick-0960.json",
+        "sha256": "2e71530bb87acfd99cf6a52992f5bdb3d2809555108ec107d9f127b61def5e62"
+      },
+      {
+        "file": "tick-1020.json",
+        "sha256": "63e32faa85774b15fa789d919b9a2680ed81daccc487b0aa0e0a4b67ef5f941d"
+      },
+      {
+        "file": "tick-1080.json",
+        "sha256": "42de6b45866549166d0a3ca8ff9a686ecb5024d4ec703409e81a4471f237b005"
+      }
+    ],
+    "scope": "All canonical clods and their full f64 material/mass/feedback fields; machine root/link/controller state and distance; separate fuel/digging/aggregate track-feedback wrappers are not compared",
+    "f32_comparison": "Only declared f32 fields recovered from Value number expansion; all f64 material/mass/energy values compared unchanged"
+  },
+  "retained_restore": {
+    "identical_complete_canonical_states": [
+      {
+        "file": "tick-0000.json",
+        "sha256": "5d1b8087f687fd17724c9472bbbd057fbe959f5a01147b90e74432e6e8465bd0"
+      },
+      {
+        "file": "tick-0060.json",
+        "sha256": "247e3e13054a4992de310520e00ee5f9f9f6551ebe486f9704b6f1d98395dc8a"
+      },
+      {
+        "file": "tick-0120.json",
+        "sha256": "c1019a3c1f1942096cce9a7e60d86fb5d999f54ef525066e9bce89d11119634a"
+      },
+      {
+        "file": "tick-0180.json",
+        "sha256": "e19dc9ab4bf1bb76a15716985c72b295f2617d2c893fb2e3a0b5cccc13c1a3e0"
+      },
+      {
+        "file": "tick-0240.json",
+        "sha256": "9e3671c04ab20cdc2bd71563af63de4c7f71ec02c752367416dce8004b99fbed"
+      },
+      {
+        "file": "tick-0300.json",
+        "sha256": "b0ddc303458b67f03c14966483a1455e7b53edcc7ada4d8e96d0f8973731ce0c"
+      },
+      {
+        "file": "tick-0360.json",
+        "sha256": "58a759b09ff30913935fa28912d3ee690f2448a2fead76d57a6ded6cd55a89bf"
+      },
+      {
+        "file": "tick-0420.json",
+        "sha256": "e848eb395950423a23d84ab341d02fed7ec887b0e702971b150ef0a88f2cca3b"
+      },
+      {
+        "file": "tick-0480.json",
+        "sha256": "639a49d071a0988dcb336e6336763ab0475df58347d2615a54dab6b3fc0d60c9"
+      },
+      {
+        "file": "tick-0540.json",
+        "sha256": "8acc8784e7cad1feccbd489512ec202348f5e2c2a1b887bc6d4a5b89b134c43c"
+      },
+      {
+        "file": "tick-0600.json",
+        "sha256": "b60f29524fba2f0426efa92360b775ed1fc7e0a10cec413519b3991998450b91"
+      },
+      {
+        "file": "tick-0660.json",
+        "sha256": "aed67cdd6cebb77223871f39445ae073f693254d0e72bd444a4913fad30abe7e"
+      },
+      {
+        "file": "tick-0720.json",
+        "sha256": "77e119812ad3c5ce80301699a206fb3766f9726e9d36e2fae19d2ebfd626c91b"
+      },
+      {
+        "file": "tick-0780.json",
+        "sha256": "0e5e44a07f6389aaf5f94a94eb5bc332c6c80ae2dd5ea8bdfb4321f5cace7c7f"
+      },
+      {
+        "file": "tick-0840.json",
+        "sha256": "94d4b6e2429992f9d6deccf8595ca0c7e58ec7d5e41fae4d28f6fc5488f18878"
+      },
+      {
+        "file": "tick-0900.json",
+        "sha256": "5c6165f32da044c58419a98dffb87e11e746e139aa6c1c96e05ebc65737a44ee"
+      },
+      {
+        "file": "tick-0960.json",
+        "sha256": "7c42286bbd714fcedac2b00122ab4c2b15365d44774794d0e038fc51ede30c12"
+      },
+      {
+        "file": "tick-1020.json",
+        "sha256": "a83272e536f5cb15eb6c9afe67a1b2aef2393ad893919e14139ac3b414e30bbe"
+      },
+      {
+        "file": "tick-1080.json",
+        "sha256": "baaf95c0a882794494e5b1f8ae4351091f2c6a74b6e363847902f3e5c5aaf072"
+      }
+    ]
+  },
+  "mechanical_runs": {
+    "full-cold-240": {
+      "clods": 1040,
+      "completed": true,
+      "contact_steps": 3182,
+      "final_held_estimate_m3": 0.0,
+      "final_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "initial_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "max_held_estimate_m3": 0.004218750167638063,
+      "maximum_coupled_passivity_residual_j": 353.0139546199316,
+      "mechanical_hz": 240,
+      "mechanical_steps": 4320,
+      "mode": "cold",
+      "restore_wall_seconds": 0.0,
+      "restores": 0,
+      "scope": "Fixed commands, CPU mechanical steps only; no fuel/GPU water/terrain evolution; actual equipment collision boxes included",
+      "simulated_seconds": 18.0,
+      "startup_seconds": 4.58e-07,
+      "step_wall_seconds": 161.64743882099984,
+      "ticks": 1080,
+      "total_wall_seconds": 161.743208292
+    },
+    "full-retained-240": {
+      "clods": 1040,
+      "completed": true,
+      "contact_steps": 3387,
+      "final_held_estimate_m3": 0.0,
+      "final_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "initial_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "max_held_estimate_m3": 0.0014062500558793545,
+      "maximum_coupled_passivity_residual_j": 2899.9270483113323,
+      "mechanical_hz": 240,
+      "mechanical_steps": 4320,
+      "mode": "retained",
+      "restore_wall_seconds": 0.0,
+      "restores": 0,
+      "scope": "Fixed commands, CPU mechanical steps only; no fuel/GPU water/terrain evolution; actual equipment collision boxes included",
+      "simulated_seconds": 18.0,
+      "startup_seconds": 0.004812542,
+      "step_wall_seconds": 113.4874619249998,
+      "ticks": 1080,
+      "total_wall_seconds": 113.605689083
+    },
+    "full-restore-240": {
+      "clods": 1040,
+      "completed": true,
+      "contact_steps": 3387,
+      "final_held_estimate_m3": 0.0,
+      "final_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "initial_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "max_held_estimate_m3": 0.0014062500558793545,
+      "maximum_coupled_passivity_residual_j": 2899.9270483113323,
+      "mechanical_hz": 240,
+      "mechanical_steps": 4320,
+      "mode": "restore",
+      "restore_wall_seconds": 1.003895746,
+      "restores": 18,
+      "scope": "Fixed commands, CPU mechanical steps only; no fuel/GPU water/terrain evolution; actual equipment collision boxes included",
+      "simulated_seconds": 18.0,
+      "startup_seconds": 0.004970125,
+      "step_wall_seconds": 111.29895605700025,
+      "ticks": 1080,
+      "total_wall_seconds": 112.441555166
+    },
+    "full-retained-480": {
+      "clods": 1040,
+      "completed": true,
+      "contact_steps": 2384,
+      "final_held_estimate_m3": 0.0,
+      "final_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "initial_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "max_held_estimate_m3": 0.0,
+      "maximum_coupled_passivity_residual_j": 1278.2398762645944,
+      "mechanical_hz": 480,
+      "mechanical_steps": 8640,
+      "mode": "retained",
+      "restore_wall_seconds": 0.0,
+      "restores": 0,
+      "scope": "Fixed commands, CPU mechanical steps only; no fuel/GPU water/terrain evolution; actual equipment collision boxes included",
+      "simulated_seconds": 18.0,
+      "startup_seconds": 0.004722084,
+      "step_wall_seconds": 226.27748084699974,
+      "ticks": 1080,
+      "total_wall_seconds": 226.563437875
+    }
+  },
+  "step_cost_reduction_percent": 29.793219890931866,
+  "step_throughput_ratio": 1.4243638555228895,
+  "loaded_refinement": [
+    {
+      "file": "tick-0000.json",
+      "root_distance_m": 0.0,
+      "angle_errors_rad": {
+        "heading": 0.0,
+        "swing": 0.0,
+        "boom": 0.0,
+        "stick": 0.0,
+        "curl": 0.0
+      },
+      "maximum_clod_center_difference_m": 0.0
+    },
+    {
+      "file": "tick-0060.json",
+      "root_distance_m": 0.003593931564496707,
+      "angle_errors_rad": {
+        "heading": 1.4132609067019075e-05,
+        "swing": 0.00018960848253637486,
+        "boom": 0.007548093795776367,
+        "stick": 0.006267666816711426,
+        "curl": 0.001108705997467041
+      },
+      "maximum_clod_center_difference_m": 0.7180746135300947
+    },
+    {
+      "file": "tick-0120.json",
+      "root_distance_m": 0.05297715670225773,
+      "angle_errors_rad": {
+        "heading": 0.00393332913517952,
+        "swing": 0.00022220611572265622,
+        "boom": 0.03859984874725342,
+        "stick": 0.021433472633361816,
+        "curl": 0.004147887229919434
+      },
+      "maximum_clod_center_difference_m": 0.9393707436952715
+    },
+    {
+      "file": "tick-0180.json",
+      "root_distance_m": 0.06992082543017845,
+      "angle_errors_rad": {
+        "heading": 0.003497141413390637,
+        "swing": 0.0003585462630087084,
+        "boom": 0.05221080780029297,
+        "stick": 0.015720248222351074,
+        "curl": 0.007170379161834717
+      },
+      "maximum_clod_center_difference_m": 1.3862119860278221
+    },
+    {
+      "file": "tick-0240.json",
+      "root_distance_m": 0.08084723563857904,
+      "angle_errors_rad": {
+        "heading": 0.005019193049520254,
+        "swing": 0.0002532005310058594,
+        "boom": 0.049917757511138916,
+        "stick": 0.016670703887939453,
+        "curl": 0.0007966756820678711
+      },
+      "maximum_clod_center_difference_m": 1.3838461740401036
+    },
+    {
+      "file": "tick-0300.json",
+      "root_distance_m": 0.08110023702048338,
+      "angle_errors_rad": {
+        "heading": 0.005661396775394677,
+        "swing": 0.0004329681396484375,
+        "boom": 0.04879629611968994,
+        "stick": 0.011059165000915527,
+        "curl": 1.5720725059509277e-05
+      },
+      "maximum_clod_center_difference_m": 1.3833040332170445
+    },
+    {
+      "file": "tick-0360.json",
+      "root_distance_m": 0.06784352494109926,
+      "angle_errors_rad": {
+        "heading": 0.008290491066873074,
+        "swing": 0.0001372934032348956,
+        "boom": 0.03788316249847412,
+        "stick": 0.01078498363494873,
+        "curl": 0.01785796880722046
+      },
+      "maximum_clod_center_difference_m": 1.3824964602664571
+    },
+    {
+      "file": "tick-0420.json",
+      "root_distance_m": 0.0679412253283425,
+      "angle_errors_rad": {
+        "heading": 0.008287378121167421,
+        "swing": 1.1641137710927798e-05,
+        "boom": 0.037887752056121826,
+        "stick": 0.010775566101074219,
+        "curl": 0.020173370838165283
+      },
+      "maximum_clod_center_difference_m": 1.4087118639100953
+    },
+    {
+      "file": "tick-0480.json",
+      "root_distance_m": 0.0679687852434147,
+      "angle_errors_rad": {
+        "heading": 0.008289146237075329,
+        "swing": 3.72625961400154e-06,
+        "boom": 0.03489696979522705,
+        "stick": 0.010770201683044434,
+        "curl": 0.026008963584899902
+      },
+      "maximum_clod_center_difference_m": 1.9880745427035904
+    },
+    {
+      "file": "tick-0540.json",
+      "root_distance_m": 0.06771890327086949,
+      "angle_errors_rad": {
+        "heading": 0.008236171677708626,
+        "swing": 1.430511474609375e-06,
+        "boom": 0.0016440153121948242,
+        "stick": 0.01058506965637207,
+        "curl": 0.01931130886077881
+      },
+      "maximum_clod_center_difference_m": 2.6214705310967
+    },
+    {
+      "file": "tick-0600.json",
+      "root_distance_m": 0.06771612923714714,
+      "angle_errors_rad": {
+        "heading": 0.008232732769101858,
+        "swing": 1.5154000936552644e-06,
+        "boom": 2.9921531677246094e-05,
+        "stick": 0.010754108428955078,
+        "curl": 0.019358158111572266
+      },
+      "maximum_clod_center_difference_m": 2.6123001576577116
+    },
+    {
+      "file": "tick-0660.json",
+      "root_distance_m": 0.06744066137919948,
+      "angle_errors_rad": {
+        "heading": 0.008229161147028208,
+        "swing": 1.092958374471209e-06,
+        "boom": 7.152557373046875e-07,
+        "stick": 0.010753870010375977,
+        "curl": 0.02042078971862793
+      },
+      "maximum_clod_center_difference_m": 2.2025735866919094
+    },
+    {
+      "file": "tick-0720.json",
+      "root_distance_m": 0.06715706660982058,
+      "angle_errors_rad": {
+        "heading": 0.008198406081646679,
+        "swing": 9.726387943942427e-07,
+        "boom": 2.1457672119140625e-06,
+        "stick": 0.01075124740600586,
+        "curl": 0.021012574434280396
+      },
+      "maximum_clod_center_difference_m": 2.114915984620545
+    },
+    {
+      "file": "tick-0780.json",
+      "root_distance_m": 0.06692633091408087,
+      "angle_errors_rad": {
+        "heading": 0.008190498687326908,
+        "swing": 2.3804781683622878e-06,
+        "boom": 4.76837158203125e-07,
+        "stick": 0.010751962661743164,
+        "curl": 0.02171216905117035
+      },
+      "maximum_clod_center_difference_m": 2.1447313043563736
+    },
+    {
+      "file": "tick-0840.json",
+      "root_distance_m": 0.0668647606660949,
+      "angle_errors_rad": {
+        "heading": 0.008186499122530222,
+        "swing": 2.223079604846134e-06,
+        "boom": 8.344650268554688e-07,
+        "stick": 0.010756850242614746,
+        "curl": 0.022638916969299316
+      },
+      "maximum_clod_center_difference_m": 2.209196861068194
+    },
+    {
+      "file": "tick-0900.json",
+      "root_distance_m": 0.06685127532709474,
+      "angle_errors_rad": {
+        "heading": 0.008177673909813166,
+        "swing": 4.76837158203125e-07,
+        "boom": 9.179115295410156e-06,
+        "stick": 0.010749340057373047,
+        "curl": 0.023961782455444336
+      },
+      "maximum_clod_center_difference_m": 2.587733212069508
+    },
+    {
+      "file": "tick-0960.json",
+      "root_distance_m": 0.0668478063973358,
+      "angle_errors_rad": {
+        "heading": 0.008175252936780454,
+        "swing": 1.391338455329763e-07,
+        "boom": 0.00028967857360839844,
+        "stick": 0.010814905166625977,
+        "curl": 1.33514404296875e-05
+      },
+      "maximum_clod_center_difference_m": 1.3740670408667786
+    },
+    {
+      "file": "tick-1020.json",
+      "root_distance_m": 0.06684840391210335,
+      "angle_errors_rad": {
+        "heading": 0.00817356677725911,
+        "swing": 3.245090261179281e-07,
+        "boom": 1.2874603271484375e-05,
+        "stick": 0.010753512382507324,
+        "curl": 4.76837158203125e-07
+      },
+      "maximum_clod_center_difference_m": 1.3734406515864686
+    },
+    {
+      "file": "tick-1080.json",
+      "root_distance_m": 0.06684998893144982,
+      "angle_errors_rad": {
+        "heading": 0.008172668050974607,
+        "swing": 7.416664686843433e-07,
+        "boom": 4.291534423828125e-06,
+        "stick": 0.010756134986877441,
+        "curl": 4.76837158203125e-07
+      },
+      "maximum_clod_center_difference_m": 1.3727347289498162
+    }
+  ],
+  "passive_controls": [
+    {
+      "name": "passive-springs-cold",
+      "input_sha256": "6d9abdc43b106e0b504a7598b696d45c96fdba5cb74593521b4b4482a4571539",
+      "clods": 1040,
+      "completed": true,
+      "contact_steps": 36,
+      "final_held_estimate_m3": 0.0,
+      "final_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "initial_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "max_held_estimate_m3": 0.0,
+      "maximum_coupled_passivity_residual_j": 65.03359077191544,
+      "mechanical_hz": 240,
+      "mechanical_steps": 480,
+      "mode": "cold",
+      "restore_wall_seconds": 0.0,
+      "restores": 0,
+      "scope": "Fixed commands, CPU mechanical steps only; no fuel/GPU water/terrain evolution; actual equipment collision boxes included",
+      "simulated_seconds": 2.0,
+      "startup_seconds": 2.92e-07,
+      "step_wall_seconds": 24.784584789999997,
+      "ticks": 120,
+      "total_wall_seconds": 24.799102167
+    },
+    {
+      "name": "passive-springs-retained",
+      "input_sha256": "6d9abdc43b106e0b504a7598b696d45c96fdba5cb74593521b4b4482a4571539",
+      "clods": 1040,
+      "completed": true,
+      "contact_steps": 390,
+      "final_held_estimate_m3": 0.0,
+      "final_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "initial_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "max_held_estimate_m3": 0.0,
+      "maximum_coupled_passivity_residual_j": 838.4653265299821,
+      "mechanical_hz": 240,
+      "mechanical_steps": 480,
+      "mode": "retained",
+      "restore_wall_seconds": 0.0,
+      "restores": 0,
+      "scope": "Fixed commands, CPU mechanical steps only; no fuel/GPU water/terrain evolution; actual equipment collision boxes included",
+      "simulated_seconds": 2.0,
+      "startup_seconds": 0.004468708,
+      "step_wall_seconds": 15.217515463999998,
+      "ticks": 120,
+      "total_wall_seconds": 15.235668083
+    },
+    {
+      "name": "free-hinges-cold",
+      "input_sha256": "e08a5a8cda5d58808bca3c748652e67bcfbd4f9e25e9fe4134ff6806dd500b65",
+      "clods": 1040,
+      "completed": true,
+      "contact_steps": 11,
+      "final_held_estimate_m3": 0.0,
+      "final_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "initial_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "max_held_estimate_m3": 0.0,
+      "maximum_coupled_passivity_residual_j": 65.46588991509907,
+      "mechanical_hz": 240,
+      "mechanical_steps": 480,
+      "mode": "cold",
+      "restore_wall_seconds": 0.0,
+      "restores": 0,
+      "scope": "Fixed commands, CPU mechanical steps only; no fuel/GPU water/terrain evolution; actual equipment collision boxes included",
+      "simulated_seconds": 2.0,
+      "startup_seconds": 3.75e-07,
+      "step_wall_seconds": 24.677408001999986,
+      "ticks": 120,
+      "total_wall_seconds": 24.693427834
+    },
+    {
+      "name": "free-hinges-retained",
+      "input_sha256": "e08a5a8cda5d58808bca3c748652e67bcfbd4f9e25e9fe4134ff6806dd500b65",
+      "clods": 1040,
+      "completed": true,
+      "contact_steps": 42,
+      "final_held_estimate_m3": 0.0,
+      "final_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "initial_material": {
+        "gold_g": 5.254391689276078,
+        "gravel_m3": 0.2500000176951288,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.31250000465661265
+      },
+      "max_held_estimate_m3": 0.0,
+      "maximum_coupled_passivity_residual_j": 64.87109327067174,
+      "mechanical_hz": 240,
+      "mechanical_steps": 480,
+      "mode": "retained",
+      "restore_wall_seconds": 0.0,
+      "restores": 0,
+      "scope": "Fixed commands, CPU mechanical steps only; no fuel/GPU water/terrain evolution; actual equipment collision boxes included",
+      "simulated_seconds": 2.0,
+      "startup_seconds": 0.004574,
+      "step_wall_seconds": 15.057137044000006,
+      "ticks": 120,
+      "total_wall_seconds": 15.077955875
+    }
+  ],
+  "passive_input_proof": [
+    {
+      "case": "passive-springs",
+      "input_sha256": "6d9abdc43b106e0b504a7598b696d45c96fdba5cb74593521b4b4482a4571539"
+    },
+    {
+      "case": "free-hinges",
+      "input_sha256": "e08a5a8cda5d58808bca3c748652e67bcfbd4f9e25e9fe4134ff6806dd500b65"
+    }
+  ],
+  "source_audit": {
+    "shared_numerical_step_tokens_identical_after_handle_storage_substitution": true,
+    "added_dependency_versions": [
+      [
+        "bincode",
+        "1.3.3"
+      ],
+      [
+        "serde_arrays",
+        "0.2.0"
+      ]
+    ],
+    "removed_dependency_versions": [],
+    "actual_equipment_geometry_extracted_verbatim": true,
+    "unchanged_render_water_and_terrain_sources": 201
+  },
+  "adoption": {
+    "enabled_in_game": false,
+    "loaded_timestep_gate_passed": false,
+    "bulk_passivity_proven": false,
+    "new_native_performance_measured": false,
+    "full_game_goal_complete": false
+  },
+  "artifact_root": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/soil-retained-20261024",
+  "tested_sources_sha256": "06eedfd7f68d51b1f2c6ce21fbf3434f6f4a1a71548473a968f72fd60b23767a",
+  "cleanup_sha256": "c1f233f9500055ccc3e5db568aed10a189adedaf9cab2fa8f9e68ad8149a143f",
+  "native_images": {
+    "before-bank": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/soil-retained-20261024/before-bank/frame-0001.png",
+      "sha256": "5c406e0ee1eef3afd8908482a511fb6866adde599d31ab5ce171e727dee679f7"
+    },
+    "after-bank": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/soil-retained-20261024/after-bank/frame-0001.png",
+      "sha256": "5c406e0ee1eef3afd8908482a511fb6866adde599d31ab5ce171e727dee679f7"
+    },
+    "after-water": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/soil-retained-20261024/after-water/frame-0001.png",
+      "sha256": "3cfb6ec2432d00bf0203e02c5c30947cae4c456dd525370881c7318816f6c4b0"
+    }
+  },
+  "extra_checked_sources": {
+    ".github/workflows/ci.yml": "7de64dfa7e38958ad2a58032dc8f470fb31e3f7a62256f174ec501dcc126660f",
+    "scripts/make-soil-passive-tapes.py": "f8f2145dffe1a1a10dbcf74173063117eab3a47d7e2c7ee179a56ceedeedd5c7"
+  },
+  "excluded_trials": [
+    "Initial isolated short/full cold trials omitted plant boxes; not game-scene performance evidence. One owned partial retained trial was intentionally stopped to fix that fixture.",
+    "Initial one-second powered test used small-impact absolute tolerances; it failed. Final powered scope uses the existing half-second actuator budget, with intrinsic angular momentum. This does not prove stricter powered convergence."
+  ],
+  "diagnostic_attempt_logs": {
+    "retained-physical.log": "1ecb7db40f28e22755cffeb2ecaa132655749755f5a8d21a3533b6a90593507f",
+    "chart-reference.log": "53fa26185e11092a7a890552c7be05da396cc4d3a22243d374c44f5b9a5f0797",
+    "interrupted-isolated-trial.json": "6ea93d7e0439c618f967c462a653fb8c0522190682a026c9ec8fcfccd69dc350"
+  }
+}

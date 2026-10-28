@@ -1,0 +1,14 @@
+[package]
+name = "mining-physics"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mining-sim = { path = "../mining-sim" }
+game = { path = "../game" }
+sim3d = { path = "../sim3d" }
+wgpu = "23"
+glam = { workspace = true }
+bytemuck = { workspace = true }
+pollster = "0.4"
+serde_json = "1.0"

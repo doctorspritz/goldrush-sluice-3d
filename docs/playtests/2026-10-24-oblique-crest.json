@@ -1,0 +1,167 @@
+{
+  "scope": "Oblique connected-water crest normals and optical gather; muddy patches remain unresolved and the full game goal is active.",
+  "baseline_head": "2bac8138c07e39cce9d80bceb14c2e86b09d87d1",
+  "old_shader_fails_final_regression": true,
+  "old_oblique_normal_vector_error": 0.026928618819098877,
+  "fixed_oblique_normal_vector_error": 8.87205530927538e-06,
+  "normal_tolerance_unchanged": 0.001,
+  "optical_path_relative_error_bound": 0.002,
+  "maximum_fixed_oblique_path_relative_error": 0.0008197572980225985,
+  "application_checks": {
+    "passed": 51,
+    "ignored": 1
+  },
+  "real_gpu_optics_checks": {
+    "passed": 10,
+    "explicitly_executed": true
+  },
+  "quality": [
+    {
+      "name": "gpu",
+      "exit": 0
+    },
+    {
+      "name": "app",
+      "exit": 0
+    },
+    {
+      "name": "format-check",
+      "exit": 0
+    },
+    {
+      "name": "package",
+      "exit": 0
+    }
+  ],
+  "strict_clippy": {
+    "passed": true,
+    "log": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/oblique-crest-20261024/clippy.log",
+    "rust_sources_unchanged_since_run": true
+  },
+  "source_proof": {
+    "changed_build_sources": [
+      "crates/mining-physics/tests/water_optics.rs",
+      "crates/mining/src/water_compose.wgsl"
+    ],
+    "tested_source_hashes": 746,
+    "authoritative_solver_sources_identical": 322
+  },
+  "native": {
+    "sluice-final": {
+      "changed_rgb_pixels": 2596,
+      "max_channel_difference": 7
+    },
+    "sluice-normal": {
+      "changed_rgb_pixels": 9333,
+      "max_channel_difference": 1
+    },
+    "sluice-sediment": {
+      "changed_rgb_pixels": 16,
+      "max_channel_difference": 1
+    },
+    "outlet-final": {
+      "changed_rgb_pixels": 1259,
+      "max_channel_difference": 14
+    },
+    "river-final": {
+      "changed_rgb_pixels": 0,
+      "max_channel_difference": 0
+    },
+    "outlet_crop_identical": true
+  },
+  "motion": {
+    "source_frames": 66,
+    "presentation_advances": 65,
+    "worker_advances": 57,
+    "recording_underruns": 0,
+    "wall_seconds": 5.962791667,
+    "sim_seconds": 1.900000099092722,
+    "review_indices": [
+      0,
+      13,
+      26,
+      39,
+      52,
+      65
+    ],
+    "video_frames": 364,
+    "midpoint": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/oblique-crest-20261024/motion/frame-0033.png"
+  },
+  "benchmark": {
+    "before": {
+      "mean_fps": 55.790240490153316,
+      "p95_frame_ms": 25.667417,
+      "simulation_wall_ratio": 0.32478996782394937,
+      "passed": false,
+      "bulk_budget_passed": true,
+      "dry_mass_budget_passed": true,
+      "water_balance_error_m3": -7.82477043514973e-06,
+      "sluice_water_balance_error_m3": 0.0,
+      "bulk_material_error_m3": 3.396521606191527e-07,
+      "dry_mass_error_kg": 0.0006113299168646336,
+      "gold_balance_error_g": 1.3642420526593924e-12
+    },
+    "after": {
+      "mean_fps": 55.617439617789714,
+      "p95_frame_ms": 25.873458,
+      "simulation_wall_ratio": 0.3198590614699722,
+      "passed": false,
+      "bulk_budget_passed": true,
+      "dry_mass_budget_passed": true,
+      "water_balance_error_m3": -7.819346564019725e-06,
+      "sluice_water_balance_error_m3": 0.0,
+      "bulk_material_error_m3": 3.34066612595052e-07,
+      "dry_mass_error_kg": 0.0006012992234900594,
+      "gold_balance_error_g": 3.637978807091713e-12
+    }
+  },
+  "manual_OS_input_tested": false,
+  "whole_video_playback_reviewed": false,
+  "reviewed_six_motion_samples_and_native_layers": true,
+  "native_diagnostic_option_error": {
+    "option": "thickness",
+    "exit": 101,
+    "reason": "unknown capture water channel",
+    "corrected_option": "column",
+    "corrected_capture_passed": true
+  },
+  "remaining_work": [
+    "Reduce broad muddy optical patches without erasing actual sediment/path variation. Additional scene and optical-column captures are diagnostic; they do not establish a unique cause.",
+    "Improve broad crest/spray presentation and granular speckling.",
+    "Reach physical real time while retaining fluid/riffle/terrain fidelity."
+  ],
+  "all_heavy_jobs_sequential": true,
+  "new_panic_or_WindowServer_report": false,
+  "cleanup_log_sha256": "1b7b700fedc8620a7dac2b8d6f443d007f371e8492dc3829b333bcaf84920db1",
+  "binaries": {
+    "before": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/soil-retained-20261024/final-app/First Bend.app/Contents/MacOS/mining",
+      "sha256": "8f3dc06ff746b4b6c8d644e8ce3bf5a89b390ff6181284e759a18df7611c9872"
+    },
+    "after": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/oblique-crest-20261024/final-app/First Bend.app/Contents/MacOS/mining",
+      "sha256": "19bf2131832c375759ab98ab4a189659ca003a10000e3fbddc994b402ed7d471"
+    },
+    "load": {
+      "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/storage-final-2026-10-23/grown.json.save.json",
+      "sha256": "32acd1d5e9873f67f628df283712eca96c318a2f07780e1720fc6eaff0310e42"
+    }
+  },
+  "evidence_hashes": {
+    "comparison.png": "96738887217e0b7f7a3afc7350af24d3b61e4f516f235b7f158e40cba14611ba",
+    "motion-review.png": "d299a20c371345a89d2f3f116947fa5d323252646a76c45af9ff3e4d1dd08678",
+    "motion.mp4": "c812d7d3c8998736b773a982c78f5f0f0c5dfca017da99c7af6e264e17692a5e",
+    "gpu-final.log": "3d22b2c1eac89e14c43ce01027b5d2f9c6e218a9661da7e3fd2bd339ad701d11",
+    "app-final.log": "b08b7bf5f66d3ff8ea39eb999c24a654f4dc7f624f2b8c26a38b0d3caadaee01",
+    "before-rotated-gpu.log": "e4954557d4674028b9c5b8eb34869d15e3f8cdb1c437bd01eb97c9a923549967",
+    "diagnostic-scene/frame-0001.png": "2cfdbfd8daa7eb819aee4cded82e6030fe55a5d8f75056ef27721a757acd9816",
+    "diagnostic-column/frame-0001.png": "90d3bcd653a3515278535c405603bed0594fb07a07c842df8b7631a2bcfbf5f5"
+  },
+  "cleanup_final_counts": {
+    "agent_browser": 0,
+    "playwright_tests": 0,
+    "playwright_mcp": 14,
+    "chrome_for_testing": 0,
+    "node_ecosystem": 56
+  }
+}

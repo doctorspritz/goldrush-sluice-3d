@@ -1,0 +1,231 @@
+{
+  "base_commit": "5f2db164b55f9075316b656252a7bf642adfd74b",
+  "changed_sources": {
+    "crates/mining/src/water_blur.wgsl": "f0f92aa5c7f155af8ea4c385af23c9ddab64921fa7481097c601a9d8657b5861",
+    "crates/mining/src/scene.rs": "f6881aa838b451bbe3b017b59bed6af9f9da3f587a5d4bbb641f89e7a585d231",
+    "crates/mining-physics/tests/water_optics.rs": "e3c156095172dc587bb9d473f389f13556f3a663b0b8c3039e87e1e30d93c7c5"
+  },
+  "unchanged_other_rust_wgsl_sources": 712,
+  "artifact_directory": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-bed-20261025",
+  "quality": {
+    "app_tests_passed": 64,
+    "app_profiles_unrun": 2,
+    "real_gpu_optics_passed": 15,
+    "real_gpu_complete_chain_passed": 1,
+    "legacy_control_rms_ratio": 0.9843739127596604,
+    "corrected_rms_ratio": 0.021465718408755007,
+    "clippy": "pass",
+    "format": "pass",
+    "signed_packaging": "pass",
+    "intermediate_format_failure": "corrected before final packaging"
+  },
+  "native": {
+    "frozen_fields": [
+      "sim_time",
+      "fluid_clock",
+      "solver_steps",
+      "tracks",
+      "machine",
+      "excavated_m3",
+      "delivered_m3",
+      "flow",
+      "surface",
+      "active_soil",
+      "material_motion"
+    ],
+    "frozen_equal": {
+      "sluice-final": {
+        "sim_time": true,
+        "fluid_clock": true,
+        "solver_steps": true,
+        "tracks": true,
+        "machine": true,
+        "excavated_m3": true,
+        "delivered_m3": true,
+        "flow": true,
+        "surface": true,
+        "active_soil": true,
+        "material_motion": true
+      },
+      "sluice-normal": {
+        "sim_time": true,
+        "fluid_clock": true,
+        "solver_steps": true,
+        "tracks": true,
+        "machine": true,
+        "excavated_m3": true,
+        "delivered_m3": true,
+        "flow": true,
+        "surface": true,
+        "active_soil": true,
+        "material_motion": true
+      },
+      "sluice-column": {
+        "sim_time": true,
+        "fluid_clock": true,
+        "solver_steps": true,
+        "tracks": true,
+        "machine": true,
+        "excavated_m3": true,
+        "delivered_m3": true,
+        "flow": true,
+        "surface": true,
+        "active_soil": true,
+        "material_motion": true
+      },
+      "sluice-sediment": {
+        "sim_time": true,
+        "fluid_clock": true,
+        "solver_steps": true,
+        "tracks": true,
+        "machine": true,
+        "excavated_m3": true,
+        "delivered_m3": true,
+        "flow": true,
+        "surface": true,
+        "active_soil": true,
+        "material_motion": true
+      },
+      "river-final": {
+        "sim_time": true,
+        "fluid_clock": true,
+        "solver_steps": true,
+        "tracks": true,
+        "machine": true,
+        "excavated_m3": true,
+        "delivered_m3": true,
+        "flow": true,
+        "surface": true,
+        "active_soil": true,
+        "material_motion": true
+      },
+      "outlet-final": {
+        "sim_time": true,
+        "fluid_clock": true,
+        "solver_steps": true,
+        "tracks": true,
+        "machine": true,
+        "excavated_m3": true,
+        "delivered_m3": true,
+        "flow": true,
+        "surface": true,
+        "active_soil": true,
+        "material_motion": true
+      }
+    },
+    "image_comparison": {
+      "sluice-final": {
+        "changed_rgb_pixels": 87575,
+        "max_channel_delta": 140
+      },
+      "sluice-normal": {
+        "changed_rgb_pixels": 149682,
+        "max_channel_delta": 223
+      },
+      "sluice-column": {
+        "changed_rgb_pixels": 45256,
+        "max_channel_delta": 200
+      },
+      "sluice-sediment": {
+        "changed_rgb_pixels": 2008,
+        "max_channel_delta": 92
+      },
+      "river-final": {
+        "changed_rgb_pixels": 0,
+        "max_channel_delta": 0
+      },
+      "outlet-final": {
+        "changed_rgb_pixels": 18956,
+        "max_channel_delta": 153
+      }
+    },
+    "motion": {
+      "before": {
+        "source_frames": 54,
+        "wall_span": 3.956063083,
+        "sim_advance": 1.5666667483747005,
+        "physical_advances": 47,
+        "presentation_advances": 53,
+        "recording_underruns": 0,
+        "capture_passed": true
+      },
+      "after": {
+        "source_frames": 53,
+        "wall_span": 3.935003292,
+        "sim_advance": 1.5666667483747005,
+        "physical_advances": 47,
+        "presentation_advances": 52,
+        "recording_underruns": 0,
+        "capture_passed": true
+      }
+    }
+  },
+  "synthetic_deposition_control": {
+    "type": "synthetic frozen appearance control, not physical erosion or gameplay evidence",
+    "changed_cells": 311,
+    "discarded_subprecision_volume_m3": 3.3772309822461256e-09,
+    "rejected_first_attempt": "Raised ground reduced suspended-remainder precision allowance; app rejected fixture and loaded fresh shift. Those images are not acceptance evidence.",
+    "source_save_sha256": "32acd1d5e9873f67f628df283712eca96c318a2f07780e1720fc6eaff0310e42",
+    "fixture_sha256": "4bf7861c1b58305924d008c12cf09fb6aacbeb1c58bd58f6396cedb20e5fe656",
+    "deposit_range_m": [
+      0,
+      0.03
+    ]
+  },
+  "review": "All 53 flowing native crops, frozen final/normal/column/sediment views, river/outlet comparisons and the validated synthetic deposition control reviewed. No whole-video playback or manual-control claim.",
+  "benchmarks": {
+    "before": {
+      "mean_fps": 57.7702141580366,
+      "p95_frame_ms": 25.406875,
+      "simulation_wall_ratio": 0.3848562794532461,
+      "passed": false,
+      "bulk_budget_passed": true,
+      "dry_mass_budget_passed": true,
+      "water_balance_error_m3": -7.85580312623324e-06,
+      "sluice_water_balance_error_m3": 0.0,
+      "gold_balance_error_g": 4.547473508864641e-13,
+      "bulk_material_error_m3": 4.134449795856199e-07,
+      "dry_mass_error_kg": 0.0007442381465807557
+    },
+    "after": {
+      "mean_fps": 57.617133120495566,
+      "p95_frame_ms": 25.706334000000002,
+      "simulation_wall_ratio": 0.38650560418704155,
+      "passed": false,
+      "bulk_budget_passed": true,
+      "dry_mass_budget_passed": true,
+      "water_balance_error_m3": -7.870738095050456e-06,
+      "sluice_water_balance_error_m3": 0.0,
+      "gold_balance_error_g": 5.002220859751105e-12,
+      "bulk_material_error_m3": 4.143215619478724e-07,
+      "dry_mass_error_kg": 0.0007457156898453832
+    }
+  },
+  "candidate_app": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-bed-20261025/app/First Bend.app",
+  "candidate_binary_sha256": "13d4e20256f0c8b6c0cd1fa2f9a03e6c57820fcc4b8c5b7fe9396787eca3a892",
+  "preserved_original_dirty_files": 9,
+  "preserved_user_stash": [
+    "a6c6b857da29269271eebb03025767414eabde90"
+  ],
+  "media": {
+    "docs/playtests/2026-10-25-world-crest.jpg": "527d65e99581571c183e50b8da219e2280e2f48c9911fcf1bd3850c486bbddd5",
+    "docs/playtests/2026-10-25-deposit-blend.jpg": "84454f823c4055a2ebb45b75341dc7a9865a78fedc9a08d31efce3829651160f",
+    "docs/playtests/2026-10-25-world-crest.mp4": "7a5da681cf617a99d9d6c993b2d7ca9f432c0c79d9500ff71785d799790d378e"
+  },
+  "scope": "Render-only millimetre-scale crest fairing and continuous deposited-mud colour with matching cache invalidation. Physical particles, riffles, terrain flow and all material ledgers unchanged.",
+  "limits": "Real hydraulic waves and transported sediment remain visible. Short native windows do not establish speedup. Physical real-time gate still fails. No manual controls or full soil replay rerun.",
+  "full_goal_complete": false,
+  "delivered_app": "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/target/bundles/First Bend.app",
+  "previous_app": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/crest-bed-20261025/previous-app/First Bend.app",
+  "previous_binary_sha256": "13f4960de14978156db129a38959b91df124b157804cb9cdbc3a5b777d25a263",
+  "beads": {
+    "sync_supported": false,
+    "scoped_export_rows": [
+      "sluice-oblique-crest-20261024"
+    ],
+    "exported_lines": 225
+  },
+  "cleanup": "agent_browser: processes=0 rss_mib=0.0\nplaywright_tests: processes=0 rss_mib=0.0\nplaywright_mcp: processes=16 rss_mib=1.8\nchrome_for_testing: processes=0 rss_mib=0.0\nnode_ecosystem: processes=64 rss_mib=22.3\n",
+  "new_crash_reports": [],
+  "reviewed_temporal_crops": 53
+}

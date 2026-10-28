@@ -1,3 +1,4 @@
+override PERIODIC_Z: bool = false;
 // Density Position Grid Shader (3D)
 //
 // Computes position changes from density-derived pressure and stores on grid.
@@ -34,6 +35,11 @@ const CELL_AIR: u32 = 0u;
 const CELL_FLUID: u32 = 1u;
 const CELL_SOLID: u32 = 2u;
 
+fn periodic_k(k: i32) -> u32 {
+    if PERIODIC_Z { return u32(((k % i32(params.depth)) + i32(params.depth)) % i32(params.depth)); }
+    return u32(k);
+}
+
 fn cell_index(i: u32, j: u32, k: u32) -> u32 {
     return k * params.width * params.height + j * params.width + i;
 }
@@ -42,9 +48,9 @@ fn sample_pressure(i: i32, j: i32, k: i32) -> f32 {
     // Out of bounds = 0 pressure
     if (i < 0 || i >= i32(params.width)) { return 0.0; }
     if (j < 0 || j >= i32(params.height)) { return 0.0; }
-    if (k < 0 || k >= i32(params.depth)) { return 0.0; }
+    if (!PERIODIC_Z && (k < 0 || k >= i32(params.depth))) { return 0.0; }
 
-    let idx = cell_index(u32(i), u32(j), u32(k));
+    let idx = cell_index(u32(i), u32(j), periodic_k(k));
     let ct = cell_type[idx];
 
     // Fluid cells have pressure, others have 0
@@ -57,8 +63,8 @@ fn sample_pressure(i: i32, j: i32, k: i32) -> f32 {
 fn get_cell_type(i: i32, j: i32, k: i32) -> u32 {
     if (i < 0 || i >= i32(params.width)) { return CELL_AIR; }
     if (j < 0 || j >= i32(params.height)) { return CELL_AIR; }
-    if (k < 0 || k >= i32(params.depth)) { return CELL_AIR; }
-    return cell_type[cell_index(u32(i), u32(j), u32(k))];
+    if (!PERIODIC_Z && (k < 0 || k >= i32(params.depth))) { return CELL_AIR; }
+    return cell_type[cell_index(u32(i), u32(j), periodic_k(k))];
 }
 
 fn compute_position_change(center_type: u32, center_pressure: f32,

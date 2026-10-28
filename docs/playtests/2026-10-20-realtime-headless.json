@@ -1,0 +1,23 @@
+{
+  "backflow_fraction": 0.037803516264966947,
+  "gold_balance_error_g": 1.3642420526593924e-12,
+  "grains": 2236,
+  "mean_downstream_ms": 0.36303412914276123,
+  "serialized_stage_ms": {},
+  "simulated_seconds": 10.000000521540642,
+  "simulation_wall_ratio": 0.8137360527664383,
+  "timings_ms": {
+    "dem": 5.5381445583333315,
+    "dem_pairs": 5.124177893333335,
+    "dem_sdf": 0.4004544283333334,
+    "finish": 0.6090258466666663,
+    "fluid_and_readback": 12.676129563333339,
+    "prepare": 0.9096173633333337,
+    "terrain": 0.7454304133333333
+  },
+  "wall_seconds": 12.28899775,
+  "warmup_ticks": 60,
+  "water_balance_error_m3": 0.0,
+  "water_depth_m": 0.026905043050646782,
+  "water_particles": 122687
+}

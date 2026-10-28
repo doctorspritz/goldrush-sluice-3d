@@ -1,7 +1,95 @@
 //! Simulation dispatch methods for GPU heightfield.
 
+use super::buffers::WaterBuffers;
 use super::pipelines::{CoreBindGroups, SimulationPipelines};
+use super::{TerrainEventCapture, TerrainEventRecorder};
 
+#[derive(Clone, Copy)]
+pub enum BedExchangeStage {
+    Settling,
+    Erosion,
+}
+
+fn copy_concentrations(
+    encoder: &mut wgpu::CommandEncoder,
+    water: &WaterBuffers,
+    size: u64,
+    to_next: bool,
+) {
+    for (current, next) in [
+        (&water.suspended_sediment, &water.suspended_sediment_next),
+        (
+            &water.suspended_overburden,
+            &water.suspended_overburden_next,
+        ),
+        (&water.suspended_gravel, &water.suspended_gravel_next),
+        (&water.suspended_paydirt, &water.suspended_paydirt_next),
+    ] {
+        let (source, destination) = if to_next {
+            (current, next)
+        } else {
+            (next, current)
+        };
+        encoder.copy_buffer_to_buffer(source, 0, destination, 0, size);
+    }
+}
+
+/// Snapshot immutable geometry, then exchange material. Settling writes the
+/// counted high/low bed directly; erosion reconciles its stored candidate.
+#[allow(clippy::too_many_arguments)]
+pub fn dispatch_bed_exchange_tile(
+    encoder: &mut wgpu::CommandEncoder,
+    pipelines: &SimulationPipelines,
+    bind_groups: &CoreBindGroups,
+    water: &WaterBuffers,
+    cells: u32,
+    tile_width: u32,
+    tile_depth: u32,
+    stage: BedExchangeStage,
+) {
+    dispatch_bed_exchange_passes(
+        encoder,
+        pipelines,
+        bind_groups,
+        tile_width,
+        tile_depth,
+        stage,
+    );
+    // Release the phase-local old-layer aliases, including inactive cells.
+    copy_concentrations(encoder, water, cells as u64 * 4, true);
+}
+
+fn dispatch_bed_exchange_passes(
+    encoder: &mut wgpu::CommandEncoder,
+    pipelines: &SimulationPipelines,
+    bind_groups: &CoreBindGroups,
+    tile_width: u32,
+    tile_depth: u32,
+    stage: BedExchangeStage,
+) {
+    let (candidate, reconcile) = match stage {
+        BedExchangeStage::Settling => (&pipelines.settling, None),
+        BedExchangeStage::Erosion => (&pipelines.erosion, Some(&pipelines.erosion_reconcile)),
+    };
+    for (pipeline, label) in [
+        Some((&pipelines.bed_snapshot, "Snapshot Bed Geometry")),
+        Some((candidate, "Exchange Bed Material")),
+        reconcile.map(|pipeline| (pipeline, "Reconcile Stored Bed Exchange")),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some(label),
+            timestamp_writes: None,
+        });
+        pass.set_bind_group(0, &bind_groups.params, &[]);
+        pass.set_bind_group(1, &bind_groups.water, &[]);
+        pass.set_bind_group(2, &bind_groups.terrain, &[]);
+        pass.set_pipeline(pipeline);
+        pass.dispatch_workgroups(tile_width.div_ceil(16), tile_depth.div_ceil(16), 1);
+    }
+}
 
 /// Dispatch simulation for a specific tile region.
 #[allow(clippy::too_many_arguments)]
@@ -13,14 +101,9 @@ pub fn dispatch_simulation_tile(
     depth: u32,
     tile_width: u32,
     tile_depth: u32,
-    suspended_sediment_buffer: &wgpu::Buffer,
-    suspended_sediment_next_buffer: &wgpu::Buffer,
-    suspended_overburden_buffer: &wgpu::Buffer,
-    suspended_overburden_next_buffer: &wgpu::Buffer,
-    suspended_gravel_buffer: &wgpu::Buffer,
-    suspended_gravel_next_buffer: &wgpu::Buffer,
-    suspended_paydirt_buffer: &wgpu::Buffer,
-    suspended_paydirt_next_buffer: &wgpu::Buffer,
+    water_substeps: u32,
+    water: &WaterBuffers,
+    events: Option<(&TerrainEventRecorder, &TerrainEventCapture)>,
 ) {
     let x_groups = tile_width.div_ceil(16);
     let z_groups = tile_depth.div_ceil(16);
@@ -40,35 +123,85 @@ pub fn dispatch_simulation_tile(
         }};
     }
 
-    // CRITICAL: Update Surface FIRST - flux needs water_surface to compute gradients!
-    dispatch_step!("Update Surface", &pipelines.surface);
-
-    // 1. Update Flux (Updates Velocity + Flux) - Reads Surface gradients
-    dispatch_step!("Update Flux", &pipelines.flux);
-
-    // 2. Update Depth (Volume Conservation) - Reads Flux, updates water_depth
-    dispatch_step!("Update Depth", &pipelines.depth);
-
-    // 3a. Settling (post-flux) - Reads Depth/Vel, writes Terrain/Suspended
-    dispatch_step!("Update Settling", &pipelines.settling);
-
-    // 3b. Erosion (post-settling) - Reads Depth/Vel/Terrain, writes Terrain/Suspended
-    dispatch_step!("Update Erosion", &pipelines.erosion);
-
-    // 4. Sediment Transport (flux-based advection)
-    dispatch_step!("Update Sediment Transport", &pipelines.sediment_transport);
-
-    // 4b. Copy suspended_sediment_next -> suspended_sediment (swap double buffers)
     let buffer_size = (width * depth) as u64 * std::mem::size_of::<f32>() as u64;
-    encoder.copy_buffer_to_buffer(suspended_sediment_next_buffer, 0, suspended_sediment_buffer, 0, buffer_size);
-    encoder.copy_buffer_to_buffer(suspended_overburden_next_buffer, 0, suspended_overburden_buffer, 0, buffer_size);
-    encoder.copy_buffer_to_buffer(suspended_gravel_next_buffer, 0, suspended_gravel_buffer, 0, buffer_size);
-    encoder.copy_buffer_to_buffer(suspended_paydirt_next_buffer, 0, suspended_paydirt_buffer, 0, buffer_size);
+    encoder.clear_buffer(
+        &water.suspended_sediment_next,
+        buffer_size,
+        Some(buffer_size * super::buffers::WATER_AUX_FLOATS as u64),
+    );
+    // Transport writes only the active tile but copies the complete target.
+    // Preserve CPU edits and concentrations outside moving tile boundaries.
+    copy_concentrations(encoder, water, buffer_size, true);
+    for step in 0..water_substeps.max(1) {
+        dispatch_step!("Update Surface", &pipelines.surface);
+        dispatch_step!("Update Flux", &pipelines.flux);
+        dispatch_step!("Aggregate Donor Budget", &pipelines.donor_budget);
+        dispatch_step!("Limit Shared Flux", &pipelines.limit_flux);
+        if let Some((recorder, capture)) = events {
+            recorder.record(encoder, capture, step);
+        }
+        dispatch_step!("Update Depth", &pipelines.depth);
+        dispatch_step!(
+            "Conservative Sediment Transport",
+            &pipelines.sediment_transport
+        );
+        copy_concentrations(encoder, water, buffer_size, false);
+    }
+    // Settling is integrated with each transport residence. Capture the bed
+    // before the remaining full-tick scour, then its reconciled result.
+    if let Some((recorder, capture)) = events {
+        recorder.record(encoder, capture, water_substeps.max(1));
+    }
+    dispatch_bed_exchange_passes(
+        encoder,
+        pipelines,
+        bind_groups,
+        tile_width,
+        tile_depth,
+        BedExchangeStage::Erosion,
+    );
+    if let Some((recorder, capture)) = events {
+        recorder.record(encoder, capture, water_substeps.max(1) + 1);
+    }
+    // Scour borrowed the targets for immutable geometry; release those aliases
+    // and restore public concentrations before returning.
+    copy_concentrations(encoder, water, buffer_size, true);
 
-    // 5. Collapse (angle of repose / slope stability)
-    // Use red-black pattern for race-free updates
-    dispatch_step!("Update Collapse Red", &pipelines.collapse_red);
-    dispatch_step!("Update Collapse Black", &pipelines.collapse_black);
+    dispatch_collapse_tile(encoder, pipelines, bind_groups, tile_width, tile_depth);
+}
+
+/// Snapshot donor transfers followed by a gather into each receiver, including
+/// a one-cell tile halo. Every cell has exactly one writer in each pass.
+pub fn dispatch_collapse_tile(
+    encoder: &mut wgpu::CommandEncoder,
+    pipelines: &SimulationPipelines,
+    bind_groups: &CoreBindGroups,
+    tile_width: u32,
+    tile_depth: u32,
+) {
+    for (pipeline, label, width, depth) in [
+        (
+            &pipelines.collapse_flux,
+            "Collapse Donor Transfers",
+            tile_width,
+            tile_depth,
+        ),
+        (
+            &pipelines.collapse_apply,
+            "Gather Collapse Transfers",
+            tile_width + 2,
+            tile_depth + 2,
+        ),
+    ] {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some(label),
+            timestamp_writes: None,
+        });
+        pass.set_bind_group(0, &bind_groups.params, &[]);
+        pass.set_bind_group(1, &bind_groups.collapse, &[]);
+        pass.set_pipeline(pipeline);
+        pass.dispatch_workgroups(width.div_ceil(16), depth.div_ceil(16), 1);
+    }
 }
 
 /// Update simulation parameters buffer.
@@ -80,7 +213,18 @@ pub fn update_params(
     cell_size: f32,
     dt: f32,
 ) {
-    update_params_tile(queue, params_buffer, width, depth, cell_size, dt, 0, 0, width, depth);
+    update_params_tile(
+        queue,
+        params_buffer,
+        width,
+        depth,
+        cell_size,
+        dt,
+        0,
+        0,
+        width,
+        depth,
+    );
 }
 
 /// Update simulation parameters for a specific tile.
@@ -104,18 +248,18 @@ pub fn update_params_tile(
         tile_depth,
         origin_x,
         origin_z,
-        0,
-        0,
+        2, // legacy standalone caller: +X outflow; game configures its river explicitly
+        2, // must match the default dispatch substep count
         bytemuck::cast(cell_size),
         bytemuck::cast(dt),
         bytemuck::cast(9.81f32),
-        bytemuck::cast(0.02f32),    // Manning's n coefficient
-        bytemuck::cast(1000.0f32),  // rho_water
-        bytemuck::cast(2650.0f32),  // rho_sediment
-        bytemuck::cast(0.001f32),   // water_viscosity
-        bytemuck::cast(0.045f32),   // critical_shields
-        bytemuck::cast(0.01f32),    // k_erosion
-        bytemuck::cast(0.05f32),    // max_erosion_per_step
+        bytemuck::cast(0.02f32),   // Manning's n coefficient
+        bytemuck::cast(1000.0f32), // rho_water
+        bytemuck::cast(2650.0f32), // rho_sediment
+        bytemuck::cast(0.001f32),  // water_viscosity
+        bytemuck::cast(0.045f32),  // critical_shields
+        bytemuck::cast(0.01f32),   // k_erosion
+        bytemuck::cast(0.05f32),   // max_erosion_per_step
         0,
         0,
     ];

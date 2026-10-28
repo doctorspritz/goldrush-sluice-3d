@@ -1,3 +1,4 @@
+override PERIODIC_Z: bool = false;
 // Fluid Cell Expansion Shader (3D)
 //
 // Conservative expansion: marks cells as FLUID only if:
@@ -31,6 +32,11 @@ const CELL_AIR: u32 = 0u;
 const CELL_FLUID: u32 = 1u;
 const CELL_SOLID: u32 = 2u;
 
+fn periodic_k(k: i32) -> u32 {
+    if PERIODIC_Z { return u32(((k % i32(params.depth)) + i32(params.depth)) % i32(params.depth)); }
+    return u32(k);
+}
+
 fn cell_index(i: u32, j: u32, k: u32) -> u32 {
     return k * params.width * params.height + j * params.width + i;
 }
@@ -38,9 +44,9 @@ fn cell_index(i: u32, j: u32, k: u32) -> u32 {
 fn get_particle_count(i: i32, j: i32, k: i32) -> i32 {
     if (i < 0 || i >= i32(params.width)) { return 0; }
     if (j < 0 || j >= i32(params.height)) { return 0; }
-    if (k < 0 || k >= i32(params.depth)) { return 0; }
+    if (!PERIODIC_Z && (k < 0 || k >= i32(params.depth))) { return 0; }
 
-    let idx = cell_index(u32(i), u32(j), u32(k));
+    let idx = cell_index(u32(i), u32(j), periodic_k(k));
     return atomicLoad(&particle_count[idx]);
 }
 
@@ -84,8 +90,8 @@ fn is_boundary_forced_air(i: u32, j: u32, k: u32) -> bool {
     if (i == params.width - 1u && open_pos_x) { return true; }
     if (j == 0u && open_neg_y) { return true; }
     if (j == params.height - 1u && open_pos_y) { return true; }
-    if (k == 0u && open_neg_z) { return true; }
-    if (k == params.depth - 1u && open_pos_z) { return true; }
+    if (!PERIODIC_Z && k == 0u && open_neg_z) { return true; }
+    if (!PERIODIC_Z && k == params.depth - 1u && open_pos_z) { return true; }
 
     return false;
 }

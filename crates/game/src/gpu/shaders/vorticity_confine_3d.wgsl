@@ -1,3 +1,4 @@
+override PERIODIC_Z: bool = false;
 // 3D Vorticity confinement force application
 //
 // Applies F = epsilon * h * (N x omega) to MAC grid velocities.
@@ -25,7 +26,7 @@ const CELL_FLUID: u32 = 1u;
 const CELL_SOLID: u32 = 2u;
 
 fn cell_index(i: u32, j: u32, k: u32) -> u32 {
-    return i + j * params.width + k * params.width * params.height;
+    return i + j * params.width + periodic_k(k) * params.width * params.height;
 }
 
 fn u_index(i: u32, j: u32, k: u32) -> u32 {
@@ -40,10 +41,19 @@ fn w_index(i: u32, j: u32, k: u32) -> u32 {
     return i + j * params.width + k * params.width * params.height;
 }
 
+fn periodic_k(k: u32) -> u32 {
+    if PERIODIC_Z { return k % params.depth; }
+    return k;
+}
+fn previous_k(k: u32) -> u32 {
+    if PERIODIC_Z { return (k + params.depth - 1u) % params.depth; }
+    return k - 1u;
+}
+
 fn compute_force(i: u32, j: u32, k: u32) -> vec3<f32> {
     if (i < 2u || i >= params.width - 2u ||
         j < 2u || j >= params.height - 2u ||
-        k < 2u || k >= params.depth - 2u) {
+        (!PERIODIC_Z && (k < 2u || k >= params.depth - 2u))) {
         return vec3(0.0);
     }
 
@@ -56,7 +66,7 @@ fn compute_force(i: u32, j: u32, k: u32) -> vec3<f32> {
         cell_type[cell_index(i + 1u, j, k)] == CELL_AIR ||
         cell_type[cell_index(i, j - 1u, k)] == CELL_AIR ||
         cell_type[cell_index(i, j + 1u, k)] == CELL_AIR ||
-        cell_type[cell_index(i, j, k - 1u)] == CELL_AIR ||
+        cell_type[cell_index(i, j, previous_k(k))] == CELL_AIR ||
         cell_type[cell_index(i, j, k + 1u)] == CELL_AIR;
     if (has_air) {
         return vec3(0.0);
@@ -64,7 +74,7 @@ fn compute_force(i: u32, j: u32, k: u32) -> vec3<f32> {
 
     let grad_x = (vort_mag[cell_index(i + 1u, j, k)] - vort_mag[cell_index(i - 1u, j, k)]) * 0.5;
     let grad_y = (vort_mag[cell_index(i, j + 1u, k)] - vort_mag[cell_index(i, j - 1u, k)]) * 0.5;
-    let grad_z = (vort_mag[cell_index(i, j, k + 1u)] - vort_mag[cell_index(i, j, k - 1u)]) * 0.5;
+    let grad_z = (vort_mag[cell_index(i, j, k + 1u)] - vort_mag[cell_index(i, j, previous_k(k))]) * 0.5;
 
     let grad_len = sqrt(grad_x * grad_x + grad_y * grad_y + grad_z * grad_z) + 1e-5;
     let nx = grad_x / grad_len;
@@ -136,11 +146,23 @@ fn apply_confinement_w(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
+    if PERIODIC_Z {
+        // W0 alone owns the seam; the redundant upper invocation never reads
+        // it while another thread writes it.
+        if k == params.depth { return; }
+        let force = 0.5 * (compute_force(i,j,previous_k(k)).z + compute_force(i,j,k).z);
+        let idx = w_index(i,j,k);
+        let value = grid_w[idx] + force;
+        grid_w[idx] = value;
+        if k == 0u { grid_w[w_index(i,j,params.depth)] = value; }
+        return;
+    }
+
     if (k == 0u || k == params.depth) {
         return;
     }
 
-    let back_force = compute_force(i, j, k - 1u);
+    let back_force = compute_force(i, j, previous_k(k));
     let front_force = compute_force(i, j, k);
     let fz = 0.5 * (back_force.z + front_force.z);
 

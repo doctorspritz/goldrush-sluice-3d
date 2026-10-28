@@ -1,0 +1,11 @@
+{
+  "frames": 811,
+  "ledger_error_g": 2.7284841053187847e-12,
+  "mean_fps": 49.623925648526324,
+  "particles_below_floor": 0,
+  "sampled_splats": 53330,
+  "save_restored": true,
+  "scenario": "live saved shift",
+  "water_particles": 106660,
+  "water_rendering": "GPU-instanced sphere splats"
+}

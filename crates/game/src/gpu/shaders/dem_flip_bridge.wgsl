@@ -99,7 +99,7 @@ fn sample_u(pos: vec3<f32>) -> f32 {
 
     // U sample point offset: (0, 0.5, 0.5) in cell coords
     let u_pos = pos / cell_size - vec3<f32>(0.0, 0.5, 0.5);
-    let base = vec3<i32>(floor(u_pos));
+    let base = vec3<i32>(floor(u_pos + vec3<f32>(0.5)));
     let frac = u_pos - vec3<f32>(base);
 
     // Precompute 1D weights for -1, 0, +1 offsets
@@ -152,7 +152,7 @@ fn sample_v(pos: vec3<f32>) -> f32 {
 
     // V sample point offset: (0.5, 0, 0.5) in cell coords
     let v_pos = pos / cell_size - vec3<f32>(0.5, 0.0, 0.5);
-    let base = vec3<i32>(floor(v_pos));
+    let base = vec3<i32>(floor(v_pos + vec3<f32>(0.5)));
     let frac = v_pos - vec3<f32>(base);
 
     let wx = array<f32, 3>(
@@ -204,7 +204,7 @@ fn sample_w(pos: vec3<f32>) -> f32 {
 
     // W sample point offset: (0.5, 0.5, 0) in cell coords
     let w_pos = pos / cell_size - vec3<f32>(0.5, 0.5, 0.0);
-    let base = vec3<i32>(floor(w_pos));
+    let base = vec3<i32>(floor(w_pos + vec3<f32>(0.5)));
     let frac = w_pos - vec3<f32>(base);
 
     let wx = array<f32, 3>(
