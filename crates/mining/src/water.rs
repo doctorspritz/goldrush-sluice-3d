@@ -49,6 +49,9 @@ pub struct WaterSplats {
     builds: u64,
     build_ms: f64,
     max_build_ms: f64,
+    queue_ms: f64,
+    max_queue_ms: f64,
+    coalesced_requests: u64,
     last_sample_time: f64,
     surface_epoch: u64,
     capture_ms: f64,
@@ -94,6 +97,9 @@ impl WaterSplats {
         serde_json::json!({"surface_builds": self.builds,
             "mean_surface_build_ms": self.build_ms / self.builds.max(1) as f64,
             "max_surface_build_ms": self.max_build_ms,
+            "mean_surface_queue_ms": self.queue_ms/self.builds.max(1) as f64,
+            "max_surface_queue_ms": self.max_queue_ms,
+            "coalesced_surface_requests": self.coalesced_requests,
             "mean_capture_ms": self.capture_ms / self.captures.max(1) as f64,
             "max_capture_ms": self.max_capture_ms,
             "interpolation_alpha": self.presentation.alpha,
@@ -122,6 +128,9 @@ impl Default for WaterSplats {
             builds: 0,
             build_ms: 0.,
             max_build_ms: 0.,
+            queue_ms: 0.,
+            max_queue_ms: 0.,
+            coalesced_requests: 0,
             last_sample_time: -1.,
             surface_epoch: 0,
             capture_ms: 0.,
@@ -957,6 +966,19 @@ impl ViewNode for FluidNode {
 pub fn surface_ready(splats: &WaterSplats) -> bool {
     splats.health.load(Ordering::Acquire) == 1
 }
+/// A compiled pipeline may have drawn an empty pre-restore snapshot. Evidence
+/// capture must also wait for the current epoch's water and, when frozen, its
+/// exact clock. This does not delay or alter authoritative simulation.
+pub fn capture_surface_ready(
+    splats: &WaterSplats,
+    sluice: &mining_sim::Sluice,
+    sim: f64,
+    frozen: bool,
+) -> bool {
+    surface_ready(splats)
+        && (visible_count(sluice) == 0
+            || (splats.presentation.paired > 0 && (!frozen || splats.presentation.time == sim)))
+}
 pub fn surface_failed(splats: &WaterSplats) -> bool {
     splats.health.load(Ordering::Acquire) == 2
 }
@@ -1003,6 +1025,8 @@ pub fn sync(
         splats.builds += 1;
         splats.build_ms += surface.ms;
         splats.max_build_ms = splats.max_build_ms.max(surface.ms);
+        splats.queue_ms += surface.queue_ms;
+        splats.max_queue_ms = splats.max_queue_ms.max(surface.queue_ms);
     }
     if worker.can_submit()
         && (splats.fluid_revision != Some(key)
@@ -1019,6 +1043,7 @@ pub fn sync(
         splats.capture_ms += ms;
         splats.max_capture_ms = splats.max_capture_ms.max(ms);
     }
+    splats.coalesced_requests = worker.coalesced();
     if let Some(data) = splats.presentation.advance(wall, game.session.paused) {
         splats.revision = splats.revision.wrapping_add(1);
         splats.data = data;
@@ -1108,6 +1133,8 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
     let Some(p) = sluice.placement else {
         return Vec::new();
     };
+    #[cfg(test)]
+    let optical_started = std::time::Instant::now();
     let geometry = SurfaceGeometry::new(sluice, p);
     let count = sluice.water.len() + sluice.outflow.len();
     let weight = count as f32 / count.clamp(1, MAX_SPLATS) as f32;
@@ -1127,6 +1154,10 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
         slurry = mining_sim::slurry::SlurryField::new_with_suspension(sluice, &wet);
     }
     slurry.reconstruct_channel();
+    #[cfg(test)]
+    crate::fluid_surface::profile::record_stage("optical_field", optical_started.elapsed());
+    #[cfg(test)]
+    let selection_started = std::time::Instant::now();
     // Select IDs before evaluating the optical field or transforming positions.
     let mut selected: Vec<_> = sluice
         .water
@@ -1174,6 +1205,11 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
         })
         .filter(|(_, p, v, _, _)| p.is_finite() && v.is_finite())
         .collect();
+    #[cfg(test)]
+    crate::fluid_surface::profile::record_stage(
+        "selection_and_optical_sampling",
+        selection_started.elapsed(),
+    );
     let points: Vec<_> = sampled.iter().map(|(_, p, _, _, _)| *p).collect();
     let kernels = crate::fluid_surface::kernels(
         &points,
@@ -1184,7 +1220,9 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
             .map(|(_, _, _, kind, _)| *kind == 0.)
             .collect::<Vec<_>>(),
     );
-    sampled
+    #[cfg(test)]
+    let instances_started = std::time::Instant::now();
+    let instances = sampled
         .into_iter()
         .zip(kernels)
         .map(|((id, _p, v, kind, extinction), kernel)| {
@@ -1200,23 +1238,36 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
             } else {
                 kernel.axes
             };
-            // Overlapping bulk kernels reconstruct a continuous surface. A
-            // detached sample instead uses its represented water volume, so
-            // millimetre spray does not inherit a two-centimetre bulk silhouette.
-            // The accepted outlet reconstruction retains its existing support.
-            let radius = if kind == 0. {
-                // The connected density field joins neighbouring samples. Keep
-                // its support close to two sample spacings: the old broad
-                // envelope inflated and rounded riffle crests before filtering.
-                // Renormalization below retains the same represented volume;
-                // detached spray and the outlet keep their original support.
-                let radius = radius * (1.0 / 0.85);
-                let drop = (sluice.water_particle_m3() * weight as f64 * 3.
-                    / (4. * std::f64::consts::PI))
-                    .cbrt() as f32;
-                drop.min(radius) + (radius - drop.min(radius)) * kernel.bulk
+            // Connected water keeps its reconstruction support. Isolated
+            // spray, including the outlet, uses the represented-water radius
+            // instead of inheriting the broad bulk envelope. Normalize optical
+            // density below by the actual support determinant in either case.
+            let support = if kind == 0. {
+                // Channel density reconstruction needs the existing support;
+                // changing outlet drops must not widen riffle crests.
+                radius * (1.0 / 0.85)
             } else {
                 radius
+            };
+            let drop = (sluice.water_particle_m3() * weight as f64 * 3.
+                / (4. * std::f64::consts::PI))
+                .cbrt() as f32;
+            // Occupancy alone cannot distinguish a dilute falling sheet from
+            // isolated spray. The existing covariance stencil resolves shape
+            // at twelve neighbours. Preserve its broad stream support there;
+            // smoothly reduce only the unresolved, nearly isolated droplets.
+            let connected = ((kernel.neighbour_count - 1.) / 11.).clamp(0., 1.);
+            let support_weight = if kind == 2. {
+                kernel
+                    .bulk
+                    .max(connected * connected * (3. - 2. * connected))
+            } else {
+                kernel.bulk
+            };
+            let radius = if kind == 2. && support_weight == 1. {
+                support
+            } else {
+                drop.min(support) + (support - drop.min(support)) * support_weight
             };
             let axis = |v: Vec3, normal: f32| [v.x, v.y, v.z, normal];
             (
@@ -1253,7 +1304,13 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
                 },
             )
         })
-        .collect()
+        .collect();
+    #[cfg(test)]
+    crate::fluid_surface::profile::record_stage(
+        "instance_and_final_axes",
+        instances_started.elapsed(),
+    );
+    instances
 }
 
 // Use the same finite, stepped wall height as collision/mesh geometry. A
@@ -1319,6 +1376,7 @@ mod tests {
         let mut rebuild = Vec::new();
         let mut pairing = Vec::new();
         let mut fingerprint = 0u64;
+        crate::fluid_surface::profile::begin_stages();
         for _ in 0..16 {
             let start = std::time::Instant::now();
             let current = samples(std::hint::black_box(&session.sluice));
@@ -1340,12 +1398,48 @@ mod tests {
         }
         rebuild.sort_by(f64::total_cmp);
         pairing.sort_by(f64::total_cmp);
-        let report = serde_json::json!({"water":session.sluice.water.len(),"grains":session.sluice.grains.len(),"samples":previous.len(),"iterations":rebuild.len(),"rebuild_median_ms":rebuild[rebuild.len()/2],"pairing_median_ms":pairing[pairing.len()/2],"output_fnv1a64":format!("{fingerprint:016x}")});
+        let report = serde_json::json!({"water":session.sluice.water.len(),"grains":session.sluice.grains.len(),"samples":previous.len(),"iterations":rebuild.len(),"rebuild_median_ms":rebuild[rebuild.len()/2],"pairing_median_ms":pairing[pairing.len()/2],"output_fnv1a64":format!("{fingerprint:016x}"),"stages":crate::fluid_surface::profile::finish_stages()});
         println!("SURFACE PROFILE: {report}");
         if let Some(path) = std::env::var_os("SLUICE_SURFACE_PROFILE") {
             std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
         }
     }
+    #[test]
+    fn capture_waits_for_restored_water_and_frozen_clock_without_blocking_dry_scenes() {
+        let mut s = mining_sim::Sluice::default();
+        let mut water = WaterSplats::default();
+        assert!(!capture_surface_ready(&water, &s, 8., true));
+        water.health.store(1, Ordering::Release);
+        assert!(capture_surface_ready(&water, &s, 8., true));
+        s.placement = Some(mining_sim::Placement {
+            inlet: mining_sim::Vec3::ZERO,
+            yaw: 0.,
+            slope_deg: 10.,
+        });
+        s.outflow.push(mining_sim::outflow::OutflowParticle {
+            id: 1,
+            position: mining_sim::Vec3::ONE,
+            velocity: -mining_sim::Vec3::Y,
+        });
+        // A real empty render result must not qualify a restored wet shift.
+        water.presentation.push(0., 0., Arc::new(Vec::new()));
+        water.presentation.advance(0., true);
+        assert!(!capture_surface_ready(&water, &s, 8., false));
+        let particles = samples(&s);
+        let data = Arc::new(crate::water_presentation::pair_particles(
+            &particles, &particles,
+        ));
+        water.presentation.push(7., 1., data.clone());
+        water.presentation.advance(1., true);
+        assert!(capture_surface_ready(&water, &s, 8., false));
+        assert!(!capture_surface_ready(&water, &s, 8., true));
+        water.presentation.push(8., 2., data);
+        water.presentation.advance(2., true);
+        assert!(capture_surface_ready(&water, &s, 8., true));
+        water.presentation = Default::default();
+        assert!(!capture_surface_ready(&water, &s, 8., true));
+    }
+
     #[test]
     fn accepted_outlet_uses_no_surface_normal_override() {
         let mut session = mining_sim::Session::new();
@@ -1363,6 +1457,104 @@ mod tests {
         assert!(data.iter().all(|p| p.shape[2] == 2. && p.shape[3] == 0.));
         assert_eq!(before, session.sluice.accounted_water_m3());
     }
+    #[test]
+    fn outlet_droplets_use_owned_water_volume_without_inflating_dense_flow() {
+        use mining_sim::{outflow::OutflowParticle, sluice::WaterSampling, Vec3};
+        for sampling in [
+            WaterSampling::Eight,
+            WaterSampling::Four,
+            WaterSampling::Two,
+        ] {
+            let mut s = mining_sim::Session::new();
+            s.sluice.set_water_sampling(sampling).unwrap();
+            s.sluice.placement = Some(mining_sim::Placement::suggested(&s.site));
+            s.sluice.outflow = (0..125)
+                .map(|i| OutflowParticle {
+                    id: i + 1,
+                    position: Vec3::new(
+                        14. + (i % 5) as f32 * 0.003,
+                        1. + ((i / 5) % 5) as f32 * 0.003,
+                        20. + (i / 25) as f32 * 0.003,
+                    ),
+                    velocity: Vec3::new(0.3, -1., 0.),
+                })
+                .collect();
+            s.sluice.outflow.push(OutflowParticle {
+                id: 126,
+                position: Vec3::new(16., 0.5, 20.),
+                velocity: -Vec3::Y,
+            });
+            let before = serde_json::to_string(&s.sluice).unwrap();
+            let data = samples(&s.sluice);
+            let volume = s.sluice.water_particle_m3();
+            let radius = (volume * 3. / (4. * std::f64::consts::PI)).cbrt();
+            let detached = &data.iter().find(|(id, _)| *id == 126).unwrap().1;
+            assert!((f64::from(detached.center_radius[3]) / radius - 1.).abs() < 1e-6);
+            assert_eq!(detached.axis_x[..3], [1., 0., 0.]);
+            assert_eq!(detached.axis_y[..3], [0., 1., 0.]);
+            assert_eq!(detached.axis_z[..3], [0., 0., 1.]);
+            let bulk_radius = s.sluice.profile.cell() * 0.85 * sampling.volume_scale().cbrt();
+            for (id, p) in data {
+                if id != 126 {
+                    assert_eq!(p.center_radius[3].to_bits(), bulk_radius.to_bits());
+                }
+                let length = |a: [f32; 4]| Vec3::new(a[0], a[1], a[2]).length() as f64;
+                let integral = 4. / 3.
+                    * std::f64::consts::PI
+                    * f64::from(p.center_radius[3]).powi(3)
+                    * length(p.axis_x)
+                    * length(p.axis_y)
+                    * length(p.axis_z)
+                    * f64::from(p.shape[0]);
+                assert!((integral / volume - 1.).abs() < 1e-6);
+                assert_eq!((p.shape[2], p.shape[3]), (2., 0.));
+            }
+            assert_eq!(before, serde_json::to_string(&s.sluice).unwrap());
+        }
+    }
+
+    #[test]
+    fn dilute_connected_outlet_retains_stream_support_instead_of_becoming_spray() {
+        use mining_sim::{outflow::OutflowParticle, Vec3};
+        let mut s = mining_sim::Session::new();
+        s.sluice.placement = Some(mining_sim::Placement::suggested(&s.site));
+        s.sluice.outflow = (0..125)
+            .map(|i| OutflowParticle {
+                id: i + 1,
+                position: Vec3::new(
+                    (i % 5) as f32 * 0.012,
+                    ((i / 5) % 5) as f32 * 0.012,
+                    (i / 25) as f32 * 0.012,
+                ),
+                velocity: -Vec3::Y,
+            })
+            .collect();
+        let points: Vec<_> = s
+            .sluice
+            .outflow
+            .iter()
+            .map(|p| bevy::prelude::Vec3::from_array(p.position.to_array()))
+            .collect();
+        let kernels = crate::fluid_surface::kernels(
+            &points,
+            s.sluice.profile.cell(),
+            s.sluice.water_particle_m3(),
+            &vec![false; points.len()],
+        );
+        let data = samples(&s.sluice);
+        let mut dilute = 0;
+        for (kernel, (_, instance)) in kernels.iter().zip(data) {
+            if kernel.neighbour_count >= 12. && kernel.bulk < 0.5 {
+                assert_eq!(
+                    instance.center_radius[3].to_bits(),
+                    (s.sluice.profile.cell() * 0.85).to_bits()
+                );
+                dilute += 1;
+            }
+        }
+        assert!(dilute > 0, "control must contain dilute connected flow");
+    }
+
     #[test]
     fn detached_water_stays_three_dimensional_and_rendering_is_bounded() {
         use mining_sim::{

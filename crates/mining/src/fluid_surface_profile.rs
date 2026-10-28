@@ -4,6 +4,55 @@ use super::*;
 use bevy::math::{DMat3, DVec3};
 use std::cell::RefCell;
 
+std::thread_local! {
+    static STAGES: RefCell<Option<std::collections::BTreeMap<&'static str, Vec<f64>>>> = const { RefCell::new(None) };
+}
+pub(crate) fn begin_stages() {
+    STAGES.with(|s| {
+        assert!(s.borrow().is_none());
+        *s.borrow_mut() = Some(Default::default());
+    });
+}
+pub(crate) fn record_stage(name: &'static str, elapsed: std::time::Duration) {
+    STAGES.with(|s| {
+        if let Some(values) = s.borrow_mut().as_mut() {
+            values
+                .entry(name)
+                .or_default()
+                .push(elapsed.as_secs_f64() * 1000.);
+        }
+    });
+}
+pub(crate) fn finish_stages() -> serde_json::Value {
+    STAGES.with(|s| {
+        let values=s.borrow_mut().take().expect("profiling must be active");
+        serde_json::Value::Object(values.into_iter().map(|(name,mut v)| {
+            v.sort_by(f64::total_cmp);
+            (name.into(),serde_json::json!({"samples":v.len(),"median_ms":v[v.len()/2],"minimum_ms":v[0],"maximum_ms":v[v.len()-1]}))
+        }).collect())
+    })
+}
+
+std::thread_local! {static POINT_COUNT: std::cell::Cell<u32> = const {std::cell::Cell::new(0)};}
+pub(crate) fn begin_point() -> Option<std::time::Instant> {
+    if !STAGES.with(|s| s.borrow().is_some()) {
+        return None;
+    }
+    let take = POINT_COUNT.with(|n| {
+        let v = n.get();
+        n.set(v.wrapping_add(1));
+        v & 255 == 0
+    });
+    take.then(std::time::Instant::now)
+}
+pub(crate) fn point_stage(name: &'static str, time: &mut Option<std::time::Instant>) {
+    if let Some(before) = time {
+        let now = std::time::Instant::now();
+        record_stage(name, now.duration_since(*before));
+        *before = now;
+    }
+}
+
 const MAX_CAPTURE: usize = 65_536;
 const TOLERANCE: f64 = 2e-5;
 std::thread_local! {
@@ -158,6 +207,7 @@ fn kernel(axes: [Vec3; 3], normal: Vec3, planarity: f32, bulk: f32) -> Kernel {
         normal,
         planarity,
         bulk,
+        neighbour_count: 12.,
         center: Vec3::ZERO,
         channel_center: Vec3::ZERO,
     }

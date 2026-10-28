@@ -379,7 +379,14 @@ pub fn update(
     if !capture.observe_baseline(&game.session, validation.capture_scene_ready()) {
         return;
     }
-    if capture.started.elapsed().as_secs_f64() < 5. || !crate::water::surface_ready(&water) {
+    if capture.started.elapsed().as_secs_f64() < 5.
+        || !crate::water::capture_surface_ready(
+            &water,
+            &game.session.sluice,
+            game.session.sim_time,
+            capture.frozen,
+        )
+    {
         return;
     }
     if let Some(finished) = capture.finished {
@@ -462,7 +469,7 @@ pub fn update(
     let sluice = &game.session.sluice;
     let tracks = water_tracks(sluice, &capture.ids);
     let name = format!("frame-{:04}.png", capture.frames.len());
-    let record = serde_json::json!({"file":name,"wall":elapsed,"sim_time":game.session.sim_time,"paused":game.session.paused,"session_message":game.session.message,"fluid_clock":sluice.fluid_clock,"solver_steps":sluice.solver_steps,"water_only":capture.water_only,"water_debug":capture.water_debug,"flow":flow_metrics(sluice),"tracks":tracks,"surface":water.motion_samples(sluice),"presentation":water.presentation_report(),"machine":game.session.machine,"rigid_falling":game.session.falling.iter().filter(|l|l.rigid.is_some()).collect::<Vec<_>>(),"material_motion":game.session.material_motion,"plant":game.session.plant.as_ref().map(|p|serde_json::json!({"model_version":p.model_version,"connections":p.connections,"material":p.material(),"water_m3":p.water_m3(),"pending_feed":p.pending_feed.len(),"screen":{"origin":p.screen.origin,"yaw":p.screen.yaw,"time":p.screen.time,"elapsed_time_s":p.screen.elapsed_time_s,"last_step":p.screen.last_step,"motor_on":p.screen.motor_on,"config":p.screen.config,"particles":p.screen.particles.len(),"undersize":p.screen.undersize.len(),"oversize":p.screen.oversize.len(),"spills":p.screen.spills.len(),"admitted":p.screen.admitted,"delivered":p.screen.delivered,"released":p.screen.released,"sample":p.screen.particles.iter().take(64).collect::<Vec<_>>() }})),"loose_gold":game.session.site.loose_gold.as_ref().map(|g|serde_json::json!({"model_version":g.model_version,"friction_mu":g.friction_mu,"particles":g.particles.len(),"material":g.material(),"exported_g":g.exported_g,"excavated_g":g.excavated_g,"withdrawn_g":g.withdrawn_g,"admitted_g":g.admitted_g,"sample":g.particles.iter().take(64).collect::<Vec<_>>()})),"tailings":game.session.tailings.as_ref().map(|t|serde_json::json!({"airborne":t.packets.iter().filter(|p|!p.contact_pending).count(),"contact_pending":t.packets.iter().filter(|p|p.contact_pending).count(),"released_count":t.released_count,"released":t.released,"received":t.received,"exported":t.exported,"historic_bed":t.historic_bed,"active":t.active_material(),"sample":t.packets.iter().take(32).collect::<Vec<_>>()})),"soil_render":{"entities":soil_visuals.iter().count(),"visible":soil_visuals.iter().filter(|(_,v,_)|v.is_some_and(|v|v.get())).count(),"samples":soil_visuals.iter().take(3).map(|(t,v,m)|serde_json::json!({"translation":t.map(|t|t.translation().to_array()),"visible":v.map(|v|v.get()),"vertices":meshes.get(&m.0).map(|m|m.count_vertices()),"indexed":meshes.get(&m.0).map(|m|m.indices().is_some())})).collect::<Vec<_>>()},"active_soil":game.session.active_soil.as_ref().map(|s|serde_json::json!({"clods":s.clods.len(),"bucket_contents_estimate":mining_sim::bucket::estimated_soil_contents(&game.session.machine,s),"all_clods":if capture.frozen {Some(&s.clods)} else {None},"terrain_support":soil_support_report(&game.session.site,s),"material":s.material(),"totals":s.totals(mining_sim::Vec3::new(0.,-9.81,0.)),"feedback":s.feedback,"sample":s.clods.iter().take(32).map(|c|serde_json::json!({"center":c.center,"rotation":c.rotation,"velocity":c.velocity,"angular_velocity":c.angular_velocity})).collect::<Vec<_>>()})),"excavated_m3":game.session.site.excavated.volume(),"delivered_m3":game.session.delivered_m3,"hopper_material":game.session.sluice.hopper});
+    let record = serde_json::json!({"file":name,"water_snapshot_ready":crate::water::capture_surface_ready(&water,sluice,game.session.sim_time,capture.frozen),"wall":elapsed,"sim_time":game.session.sim_time,"paused":game.session.paused,"session_message":game.session.message,"fluid_clock":sluice.fluid_clock,"solver_steps":sluice.solver_steps,"water_only":capture.water_only,"water_debug":capture.water_debug,"flow":flow_metrics(sluice),"tracks":tracks,"surface":water.motion_samples(sluice),"presentation":water.presentation_report(),"machine":game.session.machine,"rigid_falling":game.session.falling.iter().filter(|l|l.rigid.is_some()).collect::<Vec<_>>(),"material_motion":game.session.material_motion,"plant":game.session.plant.as_ref().map(|p|serde_json::json!({"model_version":p.model_version,"connections":p.connections,"material":p.material(),"water_m3":p.water_m3(),"pending_feed":p.pending_feed.len(),"screen":{"origin":p.screen.origin,"yaw":p.screen.yaw,"time":p.screen.time,"elapsed_time_s":p.screen.elapsed_time_s,"last_step":p.screen.last_step,"motor_on":p.screen.motor_on,"config":p.screen.config,"particles":p.screen.particles.len(),"undersize":p.screen.undersize.len(),"oversize":p.screen.oversize.len(),"spills":p.screen.spills.len(),"admitted":p.screen.admitted,"delivered":p.screen.delivered,"released":p.screen.released,"sample":p.screen.particles.iter().take(64).collect::<Vec<_>>() }})),"loose_gold":game.session.site.loose_gold.as_ref().map(|g|serde_json::json!({"model_version":g.model_version,"friction_mu":g.friction_mu,"particles":g.particles.len(),"material":g.material(),"exported_g":g.exported_g,"excavated_g":g.excavated_g,"withdrawn_g":g.withdrawn_g,"admitted_g":g.admitted_g,"sample":g.particles.iter().take(64).collect::<Vec<_>>()})),"tailings":game.session.tailings.as_ref().map(|t|serde_json::json!({"airborne":t.packets.iter().filter(|p|!p.contact_pending).count(),"contact_pending":t.packets.iter().filter(|p|p.contact_pending).count(),"released_count":t.released_count,"released":t.released,"received":t.received,"exported":t.exported,"historic_bed":t.historic_bed,"active":t.active_material(),"sample":t.packets.iter().take(32).collect::<Vec<_>>()})),"soil_render":{"entities":soil_visuals.iter().count(),"visible":soil_visuals.iter().filter(|(_,v,_)|v.is_some_and(|v|v.get())).count(),"samples":soil_visuals.iter().take(3).map(|(t,v,m)|serde_json::json!({"translation":t.map(|t|t.translation().to_array()),"visible":v.map(|v|v.get()),"vertices":meshes.get(&m.0).map(|m|m.count_vertices()),"indexed":meshes.get(&m.0).map(|m|m.indices().is_some())})).collect::<Vec<_>>()},"active_soil":game.session.active_soil.as_ref().map(|s|serde_json::json!({"clods":s.clods.len(),"bucket_contents_estimate":mining_sim::bucket::estimated_soil_contents(&game.session.machine,s),"all_clods":if capture.frozen {Some(&s.clods)} else {None},"terrain_support":soil_support_report(&game.session.site,s),"material":s.material(),"totals":s.totals(mining_sim::Vec3::new(0.,-9.81,0.)),"feedback":s.feedback,"sample":s.clods.iter().take(32).map(|c|serde_json::json!({"center":c.center,"rotation":c.rotation,"velocity":c.velocity,"angular_velocity":c.angular_velocity})).collect::<Vec<_>>()})),"excavated_m3":game.session.site.excavated.volume(),"delivered_m3":game.session.delivered_m3,"hopper_material":game.session.sluice.hopper});
     // Retain physical timing/support evidence even if validation exits before
     // the final capture report. This append is opt-in capture work only.
     let mut line = serde_json::to_vec(&record).expect("partial motion record");
@@ -560,7 +567,14 @@ fn recording_status(frames: &[serde_json::Value], frozen: bool, paused: bool) ->
     };
     let advancing = times.windows(2).filter(|p| p[1] > p[0]).count();
     let monotone = times.windows(2).all(|p| p[1] >= p[0]);
+    let surfaces_ready = frames.iter().all(|frame| {
+        frame
+            .get("water_snapshot_ready")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+    });
     let passed = times.len() >= 2
+        && surfaces_ready
         && monotone
         && if frozen {
             advancing == 0
@@ -576,7 +590,7 @@ mod recording_tests {
     fn frames(times: &[f64]) -> Vec<serde_json::Value> {
         times
             .iter()
-            .map(|t| serde_json::json!({"sim_time":t}))
+            .map(|t| serde_json::json!({"sim_time":t,"water_snapshot_ready":true}))
             .collect()
     }
     #[test]
@@ -610,6 +624,20 @@ mod recording_tests {
             recording_status(&frames(&[1., 1.1, 1.1, 1.2]), false, false),
             (true, 2)
         );
+    }
+    #[test]
+    fn valid_clocks_cannot_hide_empty_or_unknown_water_snapshots() {
+        let mut wet = frames(&[8., 8.]);
+        wet[0]["water_snapshot_ready"] = false.into();
+        assert_eq!(recording_status(&wet, true, true), (false, 0));
+        wet[0]
+            .as_object_mut()
+            .unwrap()
+            .remove("water_snapshot_ready");
+        assert_eq!(recording_status(&wet, true, true), (false, 0));
+        let mut live = frames(&[8., 8.1]);
+        live[1]["water_snapshot_ready"] = false.into();
+        assert_eq!(recording_status(&live, false, false), (false, 1));
     }
     #[test]
     fn paused_or_rewound_capture_is_not_a_pass() {
@@ -774,8 +802,8 @@ mod baseline_tests {
         session.paused = true;
         capture.frozen = true;
         capture.frames = vec![
-            serde_json::json!({"sim_time":1.}),
-            serde_json::json!({"sim_time":1.}),
+            serde_json::json!({"sim_time":1.,"water_snapshot_ready":true}),
+            serde_json::json!({"sim_time":1.,"water_snapshot_ready":true}),
         ];
         assert!(capture.observe_baseline(&session, true));
         let healthy = capture.report(&session, &validation, serde_json::Value::Null, None);

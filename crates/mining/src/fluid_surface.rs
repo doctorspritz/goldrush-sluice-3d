@@ -1,5 +1,6 @@
 //! Render-only anisotropic kernels from local particle covariance. Moments are
 //! accumulated in occupied bins, so reconstruction does not scan every pair.
+use bevy::math::{Mat3A, Vec3A};
 use bevy::prelude::*;
 // Integer spatial keys are internal render data. Use the engine cache hasher;
 // all floating-point accumulation remains in explicit particle/stencil order.
@@ -9,16 +10,26 @@ use bevy::platform::collections::{HashMap, HashSet};
 struct Moments {
     count: f32,
     sum: Vec3,
-    square: Mat3,
+    square: Mat3A,
 }
 impl Default for Moments {
     fn default() -> Self {
         Self {
             count: 0.,
             sum: Vec3::ZERO,
-            square: Mat3::ZERO,
+            square: Mat3A::ZERO,
         }
     }
+}
+// SIMD storage preserves each scalar operation and explicit accumulation order.
+// Convert back before covariance/shape math; padding is never an optical moment.
+fn moment_outer(p: Vec3) -> Mat3A {
+    let v = Vec3A::from(p);
+    Mat3A::from_cols(v * p.x, v * p.y, v * p.z)
+}
+fn moment_columns(a: Vec3, b: Vec3) -> Mat3A {
+    let a = Vec3A::from(a);
+    Mat3A::from_cols(a * b.x, a * b.y, a * b.z)
 }
 fn outer(p: Vec3) -> Mat3 {
     Mat3::from_cols(p * p.x, p * p.y, p * p.z)
@@ -66,6 +77,9 @@ pub(crate) struct Kernel {
     pub planarity: f32,
     /// Connected-neighbour support for rendering bulk water versus small spray.
     pub bulk: f32,
+    /// Samples in the covariance neighbourhood; sparse spray and dilute
+    /// connected sheets must not be classified from occupancy alone.
+    pub neighbour_count: f32,
 }
 impl Kernel {
     /// Channel sheets use thinner support along their measured surface normal.
@@ -195,7 +209,13 @@ pub(crate) fn kernels(
     channel: &[bool],
 ) -> Vec<Kernel> {
     assert_eq!(points.len(), channel.len());
+    #[cfg(test)]
+    let deposit_started = std::time::Instant::now();
     let mut field = ChannelField::new(points, cell);
+    #[cfg(test)]
+    profile::record_stage("channel_moment_deposit", deposit_started.elapsed());
+    #[cfg(test)]
+    let bins_started = std::time::Instant::now();
     let width = cell * 2.;
     let key = |p: Vec3| (p / width).floor().as_ivec3().to_array();
     let center =
@@ -207,7 +227,7 @@ pub(crate) fn kernels(
         let m = bins.entry(k).or_default();
         m.count += 1.;
         m.sum += q;
-        m.square += outer(q);
+        m.square += moment_outer(q);
     }
     // A channel-only bin never consumes the legacy PCA. Identify bins needed
     // by outlet samples before the particle-order traversal. Shared bins still
@@ -220,7 +240,11 @@ pub(crate) fn kernels(
         .collect();
     let mut cache = HashMap::<[i32; 3], Kernel>::new();
     let mut centroid_cache = HashMap::<[i32; 3], [(f32, Vec3); 8]>::new();
-    points
+    #[cfg(test)]
+    profile::record_stage("legacy_outlet_bins", bins_started.elapsed());
+    #[cfg(test)]
+    let kernels_started = std::time::Instant::now();
+    let kernels = points
         .iter()
         .enumerate()
         .map(|(index, &p)| {
@@ -240,23 +264,15 @@ pub(crate) fn kernels(
                                 total.count += m.count;
                                 total.sum += m.sum + offset * m.count;
                                 total.square += m.square
-                                    + outer(offset) * m.count
-                                    + Mat3::from_cols(
-                                        m.sum * offset.x,
-                                        m.sum * offset.y,
-                                        m.sum * offset.z,
-                                    )
-                                    + Mat3::from_cols(
-                                        offset * m.sum.x,
-                                        offset * m.sum.y,
-                                        offset * m.sum.z,
-                                    );
+                                    + moment_outer(offset) * m.count
+                                    + moment_columns(m.sum, offset)
+                                    + moment_columns(offset, m.sum);
                             }
                         }
                     }
                 }
                 let mean = total.sum / total.count;
-                let covariance = total.square / total.count - outer(mean);
+                let covariance = Mat3::from(total.square) / total.count - outer(mean);
                 let (basis, variance) = eigen(covariance);
                 // A dozen neighbours across a 6 cm region can still be sparse
                 // spray. Estimate local occupancy from represented volume and
@@ -283,6 +299,7 @@ pub(crate) fn kernels(
                         normal: Vec3::Y,
                         planarity: 0.,
                         bulk: support,
+                        neighbour_count: total.count,
                     };
                 }
                 let values = variance.to_array();
@@ -310,6 +327,7 @@ pub(crate) fn kernels(
                     normal,
                     planarity,
                     bulk: support,
+                    neighbour_count: total.count,
                 }
             });
             // Warm the legacy PCA cache in its original particle order: its
@@ -367,11 +385,15 @@ pub(crate) fn kernels(
                 normal: kernel.normal,
                 planarity: kernel.planarity,
                 bulk: kernel.bulk * local_support,
+                neighbour_count: kernel.neighbour_count,
                 center: p + (kernel.center - p).clamp_length_max(cell * 0.2) * 0.35,
                 channel_center,
             }
         })
-        .collect()
+        .collect();
+    #[cfg(test)]
+    profile::record_stage("kernel_field_evaluation", kernels_started.elapsed());
+    kernels
 }
 // Deposit and query continuous moments instead of selecting one bin's PCA.
 // A hard bin lookup changes the ellipsoid as a particle crosses a cell face,
@@ -388,17 +410,9 @@ impl Moments {
             count: self.count,
             sum: self.sum + offset * self.count,
             square: self.square
-                + outer(offset) * self.count
-                + Mat3::from_cols(
-                    self.sum * offset.x,
-                    self.sum * offset.y,
-                    self.sum * offset.z,
-                )
-                + Mat3::from_cols(
-                    offset * self.sum.x,
-                    offset * self.sum.y,
-                    offset * self.sum.z,
-                ),
+                + moment_outer(offset) * self.count
+                + moment_columns(self.sum, offset)
+                + moment_columns(offset, self.sum),
         }
     }
     fn accumulate(&mut self, other: Self, weight: f32) {
@@ -476,7 +490,7 @@ impl ChannelField {
                     Moments {
                         count: 1.,
                         sum: q,
-                        square: outer(q),
+                        square: moment_outer(q),
                     },
                     weight,
                 );
@@ -492,6 +506,8 @@ impl ChannelField {
         out
     }
     fn sample(&mut self, p: Vec3, cell: f32, volume: f64) -> Kernel {
+        #[cfg(test)]
+        let mut point_timer = profile::begin_point();
         let (base, weights) = lattice_weights(p, self.width);
         let base = base.to_array();
         let origin = self.center(base);
@@ -545,8 +561,12 @@ impl ChannelField {
         let local = local.translated(origin - p);
         let total = total.translated(origin - p);
         let mean = total.sum / total.count.max(1e-8);
-        let covariance = total.square / total.count.max(1e-8) - outer(mean);
+        let covariance = Mat3::from(total.square) / total.count.max(1e-8) - outer(mean);
+        #[cfg(test)]
+        profile::point_stage("point_moment_interpolation", &mut point_timer);
         let (basis, variance) = eigen(covariance);
+        #[cfg(test)]
+        profile::point_stage("point_primary_eigen", &mut point_timer);
         let spread = variance.max(Vec3::splat(cell * cell * 0.25));
         let footprint = std::f64::consts::TAU.powf(1.5)
             * ((spread.x as f64) * spread.y as f64 * spread.z as f64).sqrt();
@@ -606,6 +626,8 @@ impl ChannelField {
             * smooth((boundary_normal.y - 0.25) / 0.5)
             * (1. - surface_planarity)
             * bulk;
+        #[cfg(test)]
+        profile::point_stage("point_density_and_shape", &mut point_timer);
         if boundary > 0. {
             let n = normal.lerp(boundary_normal, boundary).normalize_or_zero();
             let target = boundary_covariance(covariance, n, cell * cell * 0.25);
@@ -618,6 +640,8 @@ impl ChannelField {
             normal = n;
             surface_planarity += (1. - surface_planarity) * boundary;
         }
+        #[cfg(test)]
+        profile::point_stage("point_boundary_refinement", &mut point_timer);
         Kernel {
             axes,
             center: p,
@@ -627,12 +651,64 @@ impl ChannelField {
             normal,
             planarity: surface_planarity,
             bulk,
+            neighbour_count: total.count,
         }
     }
 }
 /// Fixed small symmetric Jacobi solve. Eigenvectors remain orthonormal even for
 /// nearly isotropic water; no velocity-directed stretching or solver changes.
+#[inline(always)]
+fn jacobi_rotation<const P: usize, const Q: usize>(a: &mut [[f32; 3]; 3], v: &mut [[f32; 3]; 3]) {
+    let apq = a[Q][P];
+    if apq.abs() < 1e-12 {
+        return;
+    }
+    let tau = (a[Q][Q] - a[P][P]) / (2. * apq);
+    let t = if tau >= 0. {
+        1. / (tau + (1. + tau * tau).sqrt())
+    } else {
+        -1. / (-tau + (1. + tau * tau).sqrt())
+    };
+    let c = 1. / (1. + t * t).sqrt();
+    let s = t * c;
+    for row in a.iter_mut() {
+        let ap = row[P];
+        let aq = row[Q];
+        row[P] = c * ap - s * aq;
+        row[Q] = s * ap + c * aq;
+    }
+    for row in v.iter_mut() {
+        let ap = row[P];
+        let aq = row[Q];
+        row[P] = c * ap - s * aq;
+        row[Q] = s * ap + c * aq;
+    }
+    let (before, after) = a.split_at_mut(Q);
+    for (ap, aq) in before[P].iter_mut().zip(&mut after[0]) {
+        let old_p = *ap;
+        let old_q = *aq;
+        *ap = c * old_p - s * old_q;
+        *aq = s * old_p + c * old_q;
+    }
+}
 fn eigen(m: Mat3) -> (Mat3, Vec3) {
+    let mut a = m.to_cols_array_2d();
+    let mut v = Mat3::IDENTITY.to_cols_array_2d();
+    for _ in 0..5 {
+        // The same ordered rotations and floating-point expressions as the
+        // reference. Fixed planes let LLVM remove dynamic indexing/branches;
+        // no sweep, tolerance, tensor or water model is approximated.
+        jacobi_rotation::<0, 1>(&mut a, &mut v);
+        jacobi_rotation::<0, 2>(&mut a, &mut v);
+        jacobi_rotation::<1, 2>(&mut a, &mut v);
+    }
+    (
+        Mat3::from_cols_array_2d(&v).transpose(),
+        Vec3::new(a[0][0], a[1][1], a[2][2]),
+    )
+}
+#[cfg(test)]
+fn eigen_reference(m: Mat3) -> (Mat3, Vec3) {
     let mut a = m.to_cols_array_2d();
     let mut v = Mat3::IDENTITY.to_cols_array_2d();
     for _ in 0..5 {
@@ -681,6 +757,95 @@ fn eigen(m: Mat3) -> (Mat3, Vec3) {
 mod tests {
     use super::*;
     #[test]
+    fn simd_moment_translation_and_accumulation_preserve_scalar_reference_bits() {
+        let mut state = 0x38c51f29u32;
+        let mut random = || {
+            state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+            (state >> 8) as f32 / 8388608. - 1.
+        };
+        for _ in 0..2048 {
+            let p = Vec3::new(random(), random(), random());
+            let q = Vec3::new(random(), random(), random());
+            let offset = Vec3::new(random(), random(), random()) * 0.03;
+            let count = random().abs() * 20.;
+            let weight = random().abs();
+            let square = outer(q);
+            let m = Moments {
+                count,
+                sum: p,
+                square: Mat3A::from(square),
+            };
+            let actual = m.translated(offset);
+            let scalar = square
+                + outer(offset) * count
+                + Mat3::from_cols(p * offset.x, p * offset.y, p * offset.z)
+                + Mat3::from_cols(offset * p.x, offset * p.y, offset * p.z);
+            assert_eq!(
+                actual.square.to_cols_array().map(f32::to_bits),
+                scalar.to_cols_array().map(f32::to_bits)
+            );
+            let mut summed = Moments {
+                count: 1.,
+                sum: q,
+                square: Mat3A::from(outer(p)),
+            };
+            summed.accumulate(actual, weight);
+            assert_eq!(summed.count.to_bits(), (1. + count * weight).to_bits());
+            assert_eq!(
+                summed.sum.to_array().map(f32::to_bits),
+                (q + (p + offset * count) * weight)
+                    .to_array()
+                    .map(f32::to_bits)
+            );
+            assert_eq!(
+                summed.square.to_cols_array().map(f32::to_bits),
+                (outer(p) + scalar * weight)
+                    .to_cols_array()
+                    .map(f32::to_bits)
+            );
+        }
+    }
+
+    #[test]
+    fn specialized_jacobi_preserves_reference_bits_across_scale_and_degeneracy() {
+        let mut state = 0x7319b42du32;
+        let mut random = || {
+            state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+            (state >> 8) as f32 / 8388608. - 1.
+        };
+        for scale in [0., 1e-16, 1e-10, 1e-4, 1., 1e6] {
+            for i in 0..512 {
+                let x = Vec3::new(random(), random(), random());
+                let y = Vec3::new(random(), random(), random());
+                let mut m = (outer(x) + outer(y)) * scale;
+                if i % 4 == 0 {
+                    m = Mat3::from_diagonal(Vec3::splat(scale));
+                }
+                if i % 4 == 1 {
+                    m.z_axis.x += scale * 1e-7;
+                }
+                if i % 4 == 2 {
+                    m.x_axis.x -= scale;
+                }
+                for input in [m, m.transpose()] {
+                    let (v, d) = eigen(input);
+                    let (rv, rd) = eigen_reference(input);
+                    assert_eq!(
+                        v.to_cols_array().map(f32::to_bits),
+                        rv.to_cols_array().map(f32::to_bits),
+                        "basis scale={scale} case={i}"
+                    );
+                    assert_eq!(
+                        d.to_array().map(f32::to_bits),
+                        rd.to_array().map(f32::to_bits),
+                        "variance scale={scale} case={i}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn cached_deposition_retains_scalar_moments_and_kernel_bytes_at_cell_edges() {
         let cell = 0.02;
         let width = cell * (8_f32 / 3.).sqrt();
@@ -713,7 +878,7 @@ mod tests {
                         Moments {
                             count: 1.,
                             sum: q,
-                            square: outer(q),
+                            square: moment_outer(q),
                         },
                         weight,
                     );
@@ -894,6 +1059,7 @@ mod tests {
                         normal,
                         planarity: 1.,
                         bulk: 1.,
+                        neighbour_count: 12.,
                     };
                     let final_axes = kernel.channel_axes();
                     let actual = support(final_axes);

@@ -8,6 +8,8 @@ Implementation progress: the [periodic conservative phase extension](../playtest
 
 The [saved full-width water-sampling stage](../playtests/2026-10-28-water-sampling.md) now owns water volume consistently at8/4/2 markers per cell without changing the 1cm grid or38cm contact domain.52 CPU,83 app and14 Metal checks pass, and reference operation states/frozen PNGs remain exact. One short native conservative8/4 comparison observes56.35/104.93FPS but only0.42983/0.48158x physical time; both fail real time. Outlet beading and slow surface reconstruction remain unqualified in `menace-7rn`. This does not complete the reduced-width/lane/bed integration below.
 
+The [surface follow-up](../playtests/2026-10-28-surface-latency.md) reduces exact-output CPU reconstruction cost and pending-snapshot lag, preserves connected outlet support while sizing isolated spray, and fixes empty restored-water capture evidence.93 app checks and native views pass. The60s default eight-marker run has over100k water markers but only0.39661x physical time at59.93FPS. Dense outlet reconstruction, operating regimes, calibration and the full lane/head/bed/contact proposal below remain unqualified; installed app/default stay unchanged.
+
 ## Published implementations and what they support
 
 | Primary source inspected | Technique worth borrowing | Limit for this game |
