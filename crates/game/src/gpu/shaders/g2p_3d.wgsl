@@ -16,6 +16,7 @@
 // Kernel constants
 const BSPLINE_SUPPORT_RADIUS: f32 = 1.5;  // Support range [-1.5, 1.5] for quadratic B-spline
 const EPSILON_METERS: f32 = 0.001;        // Small epsilon for numerical checks
+override PERIODIC_Z: bool = false;
 override PHASE_EXCHANGE_ALLOWED: bool=false;
 override WATER_SUPPORT_ALLOWED: bool=false;
 const GRAVITY: f32 = 9.81;                // Gravity magnitude (m/s²)
@@ -86,24 +87,30 @@ fn quadratic_bspline_1d(x: f32) -> f32 {
     return 0.0;
 }
 
+// Match canonical P2G faces while retaining unwrapped local stencil offsets.
+fn transfer_z(k: i32) -> u32 {
+    if PERIODIC_Z { return u32(((k % i32(params.depth)) + i32(params.depth)) % i32(params.depth)); }
+    return u32(k);
+}
+
 // Index functions for staggered grids
 fn u_index(i: i32, j: i32, k: i32) -> u32 {
     // U grid: (width+1) x height x depth
-    return u32(k) * (params.width + 1u) * params.height + u32(j) * (params.width + 1u) + u32(i);
+    return transfer_z(k) * (params.width + 1u) * params.height + u32(j) * (params.width + 1u) + u32(i);
 }
 
 fn v_index(i: i32, j: i32, k: i32) -> u32 {
     // V grid: width x (height+1) x depth
-    return u32(k) * params.width * (params.height + 1u) + u32(j) * params.width + u32(i);
+    return transfer_z(k) * params.width * (params.height + 1u) + u32(j) * params.width + u32(i);
 }
 
 fn w_index(i: i32, j: i32, k: i32) -> u32 {
     // W grid: width x height x (depth+1)
-    return u32(k) * params.width * params.height + u32(j) * params.width + u32(i);
+    return transfer_z(k) * params.width * params.height + u32(j) * params.width + u32(i);
 }
 
 fn cell_index(i: i32, j: i32, k: i32) -> u32 {
-    return u32(k) * params.width * params.height + u32(j) * params.width + u32(i);
+    return transfer_z(k) * params.width * params.height + u32(j) * params.width + u32(i);
 }
 
 // Phase buffers retain the legacy pure-water plane before their auxiliary
@@ -180,7 +187,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
 
     for (var dk: i32 = -1; dk <= 1; dk++) {
         let nk = base_u.z + dk;
-        if !phase && (nk < 0 || nk >= depth) { continue; }
+        if !phase && !PERIODIC_Z && (nk < 0 || nk >= depth) { continue; }
         let wz = quadratic_bspline_1d(frac_u.z - f32(dk));
 
         for (var dj: i32 = -1; dj <= 1; dj++) {
@@ -236,7 +243,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
 
     for (var dk: i32 = -1; dk <= 1; dk++) {
         let nk = base_v.z + dk;
-        if !phase && (nk < 0 || nk >= depth) { continue; }
+        if !phase && !PERIODIC_Z && (nk < 0 || nk >= depth) { continue; }
         let wz = quadratic_bspline_1d(frac_v.z - f32(dk));
 
         for (var dj: i32 = -1; dj <= 1; dj++) {
@@ -293,7 +300,7 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
 
     for (var dk: i32 = -1; dk <= 1; dk++) {
         let nk = base_w.z + dk;
-        if !phase && (nk < 0 || nk > depth) { continue; }  // W has depth+1 layers
+        if !phase && !PERIODIC_Z && (nk < 0 || nk > depth) { continue; }  // W has depth+1 layers
         let wz = quadratic_bspline_1d(frac_w.z - f32(dk));
 
         for (var dj: i32 = -1; dj <= 1; dj++) {
@@ -465,7 +472,8 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
         // Vorticity lift: turbulence can suspend particles
         let cell_i = clamp(i32(pos.x / cell_size), 0, width - 1);
         let cell_j = clamp(i32(pos.y / cell_size), 0, height - 1);
-        let cell_k = clamp(i32(pos.z / cell_size), 0, depth - 1);
+        var cell_k = clamp(i32(pos.z / cell_size), 0, depth - 1);
+        if PERIODIC_Z { cell_k = i32(floor(pos.z / cell_size)); }
         let cell_idx = cell_index(cell_i, cell_j, cell_k);
         let vort = vorticity_mag[cell_idx];
 

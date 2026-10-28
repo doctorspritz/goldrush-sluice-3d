@@ -208,6 +208,128 @@ impl GpuG2p3D {
         metadata: Option<Arc<wgpu::Buffer>>,
         water_support: bool,
     ) -> Self {
+        Self::new_with_options(
+            device,
+            width,
+            height,
+            depth,
+            max_particles,
+            positions_buffer,
+            velocities_buffer,
+            c_col0_buffer,
+            c_col1_buffer,
+            c_col2_buffer,
+            densities_buffer,
+            grid_u_buffer,
+            grid_v_buffer,
+            grid_w_buffer,
+            grid_u_old_buffer,
+            grid_v_old_buffer,
+            grid_w_old_buffer,
+            vorticity_mag_buffer,
+            water_grid_u_buffer,
+            water_grid_v_buffer,
+            water_grid_w_buffer,
+            water_offsets,
+            metadata,
+            water_support,
+            false,
+        )
+    }
+
+    /// Experimental periodic-Z gather with ordinary water or supported carriers.
+    /// Conservative phase exchange needs periodic geometry and is not enabled here.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_periodic_z(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        max_particles: usize,
+        positions_buffer: Arc<wgpu::Buffer>,
+        velocities_buffer: Arc<wgpu::Buffer>,
+        c_col0_buffer: Arc<wgpu::Buffer>,
+        c_col1_buffer: Arc<wgpu::Buffer>,
+        c_col2_buffer: Arc<wgpu::Buffer>,
+        densities_buffer: Arc<wgpu::Buffer>,
+        grid_u_buffer: &wgpu::Buffer,
+        grid_v_buffer: &wgpu::Buffer,
+        grid_w_buffer: &wgpu::Buffer,
+        grid_u_old_buffer: &wgpu::Buffer,
+        grid_v_old_buffer: &wgpu::Buffer,
+        grid_w_old_buffer: &wgpu::Buffer,
+        vorticity_mag_buffer: &wgpu::Buffer,
+        water_grid_u_buffer: &wgpu::Buffer,
+        water_grid_v_buffer: &wgpu::Buffer,
+        water_grid_w_buffer: &wgpu::Buffer,
+        water_offsets: [u64; 3],
+        water_support: bool,
+    ) -> Self {
+        Self::new_with_options(
+            device,
+            width,
+            height,
+            depth,
+            max_particles,
+            positions_buffer,
+            velocities_buffer,
+            c_col0_buffer,
+            c_col1_buffer,
+            c_col2_buffer,
+            densities_buffer,
+            grid_u_buffer,
+            grid_v_buffer,
+            grid_w_buffer,
+            grid_u_old_buffer,
+            grid_v_old_buffer,
+            grid_w_old_buffer,
+            vorticity_mag_buffer,
+            water_grid_u_buffer,
+            water_grid_v_buffer,
+            water_grid_w_buffer,
+            water_offsets,
+            None,
+            water_support,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_options(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        max_particles: usize,
+        positions_buffer: Arc<wgpu::Buffer>,
+        velocities_buffer: Arc<wgpu::Buffer>,
+        c_col0_buffer: Arc<wgpu::Buffer>,
+        c_col1_buffer: Arc<wgpu::Buffer>,
+        c_col2_buffer: Arc<wgpu::Buffer>,
+        densities_buffer: Arc<wgpu::Buffer>,
+        grid_u_buffer: &wgpu::Buffer,
+        grid_v_buffer: &wgpu::Buffer,
+        grid_w_buffer: &wgpu::Buffer,
+        grid_u_old_buffer: &wgpu::Buffer,
+        grid_v_old_buffer: &wgpu::Buffer,
+        grid_w_old_buffer: &wgpu::Buffer,
+        vorticity_mag_buffer: &wgpu::Buffer,
+        water_grid_u_buffer: &wgpu::Buffer,
+        water_grid_v_buffer: &wgpu::Buffer,
+        water_grid_w_buffer: &wgpu::Buffer,
+        water_offsets: [u64; 3],
+        metadata: Option<Arc<wgpu::Buffer>>,
+        water_support: bool,
+        periodic_z: bool,
+    ) -> Self {
+        assert!(
+            !periodic_z || depth >= 2,
+            "periodic transfer needs at least two Z cells"
+        );
+        assert!(
+            !periodic_z || metadata.is_none(),
+            "periodic phase geometry is not implemented"
+        );
         let phase_buffers = metadata.is_some();
         assert!(
             !water_support || !phase_buffers,
@@ -274,7 +396,7 @@ impl GpuG2p3D {
                 mapped_at_creation: false,
             }))
         });
-        let phase_constants = std::collections::HashMap::from([
+        let mut phase_constants = std::collections::HashMap::from([
             (
                 "PHASE_EXCHANGE_ALLOWED".to_string(),
                 f64::from(u32::from(phase_buffers)),
@@ -284,6 +406,9 @@ impl GpuG2p3D {
                 f64::from(u32::from(water_support)),
             ),
         ]);
+        if periodic_z {
+            phase_constants.insert("PERIODIC_Z".into(), 1.);
+        }
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("G2P 3D Shader"),

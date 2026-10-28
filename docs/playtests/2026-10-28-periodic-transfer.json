@@ -1,0 +1,200 @@
+{
+  "stage": "Experimental periodic-Z APIC particle transfer prerequisite",
+  "baseline_commit": "ea5089d76f0ed13aa947547d25a03497a3ee81e1",
+  "started_utc": "2026-10-28T01:45:00.164191+00:00",
+  "goal_status": "active",
+  "full_operation_complete": false,
+  "complete_strip_solver": false,
+  "new_gameplay_or_native_performance_claim": false,
+  "new_visual_qualification": false,
+  "calibrated_recovery": false,
+  "source_manifest": {
+    "crates/game/src/gpu/p2g_3d.rs": "16848dd0a7c1341e8136ca43de9eb26fec03700d16c21fc21cc1604c1aec6ea2",
+    "crates/game/src/gpu/g2p_3d.rs": "dea8260a68649a6cfdd7db22098dcf361829bc6c8f3738cccaf6c5019ece80df",
+    "crates/game/src/gpu/shaders/p2g_scatter_3d.wgsl": "7be1755cc71f4cd19b6a47833526199335460ef5d84cf321e08bba5577707a38",
+    "crates/game/src/gpu/shaders/p2g_divide_3d.wgsl": "ec3a8ed6e80be10bed6649a193f8b28395b943561c7ccd1bebd79502a44e797a",
+    "crates/game/src/gpu/shaders/g2p_3d.wgsl": "b176605f34c854064c3f26befa8518f56548742b097f57ad08331d80b11b962d",
+    "crates/mining-physics/tests/periodic_transfer.rs": "2928adbe486cbb008fe9e5fb480856a8daa0527ff1fba75a81b4ff6e9920c301",
+    "Cargo.lock": "cdcf28719ac98f0c2f974bb1e693ef1a972ebfbb3591f9daf60451db0af71ade"
+  },
+  "checks": {
+    "transfer-qualified": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 2021,
+      "discarded_log_bytes": 0
+    },
+    "regression-tests": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 6591,
+      "discarded_log_bytes": 0
+    },
+    "lint-qualified": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 990,
+      "discarded_log_bytes": 0
+    },
+    "game-lint": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 365535,
+      "discarded_log_bytes": 0
+    },
+    "build-replay": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 652,
+      "discarded_log_bytes": 0
+    },
+    "ordinary-replay": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 1302,
+      "discarded_log_bytes": 0
+    }
+  },
+  "test_counts": {
+    "transfer-qualified": 5,
+    "regression-tests": 14
+  },
+  "actual_metal_checks": 19,
+  "full_workspace_suite_run": false,
+  "format_check": "rustfmt +nightly --edition 2021 --check on both changed Rust modules and the new test target: pass",
+  "lint": {
+    "existing_warning_count": 98,
+    "changed_primary_warning_count": 0,
+    "changed_primary_warnings": []
+  },
+  "controls": {
+    "scatter_oracle_cases": 9,
+    "divide_cleared_or_poisoned_cases": 12,
+    "gather_field_ratio_cases": 27,
+    "particles_per_gather_case": 8,
+    "gather_particle_states": 216,
+    "tiled_depths": [
+      8,
+      12
+    ],
+    "tiled_repeats": 4,
+    "tested_physical_depths": [
+      2,
+      8,
+      12
+    ],
+    "negative_and_above_period_particles": true,
+    "paired_water_support_and_wrapped_vorticity": true,
+    "ordinary_phase_exchange_regressions": true,
+    "periodic_conservative_phase_geometry": false
+  },
+  "state_equivalence": {
+    "ticks": 150,
+    "warmup": 30,
+    "measured_ticks": 120,
+    "reference": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/periodic-projection-20261028/matched-0-reference.json.save.json",
+    "candidate_state_raw_sha256": "7fd9249da6228bee6a3c057d692e2826bce94119dd7cfa838ad36f0f23ec8b09",
+    "canonical_sha256": [
+      "65cfe7297c15460ff10ec9a7bfa3cad4cda65bf02929e4e13c1080dbd677bc6d",
+      "65cfe7297c15460ff10ec9a7bfa3cad4cda65bf02929e4e13c1080dbd677bc6d"
+    ],
+    "exact": true,
+    "canonicalisation": "Only unique contact-history keys sorted; JSON object keys sorted. No particle/cell arrays, floating-point values or signed zero normalised.",
+    "verified_transient_state_removed_bytes": 29596417
+  },
+  "headless_replay_observation": {
+    "admission": {
+      "above_initial_storage_ticks": 0,
+      "admitted_water_m3": 0.007499498315155506,
+      "capacity_blocked_ticks": 0,
+      "grain_limit_ticks": 0,
+      "nominal_water_m3": 0.007500000356230885
+    },
+    "backflow_fraction": 0.026871219487011815,
+    "bulk_material_error_m3": 3.845229912258219e-09,
+    "dry_mass_error_kg": 6.880029104650021e-06,
+    "gold_balance_error_g": -5.002220859751105e-12,
+    "gpu_device_stage_ms": {},
+    "grains": 606,
+    "initial_bulk_material_m3": 412.5155252226673,
+    "initial_dry_mass_kg": 807509.0929679504,
+    "mean_downstream_ms": 0.38941890001296997,
+    "serialized_stage_ms": {},
+    "session_mean_ms": 9.365982974999996,
+    "simulated_seconds": 2.0000001043081284,
+    "simulation_wall_ratio": 0.6241770535906882,
+    "solver_mean_ms": 17.33547671666667,
+    "storage": {
+      "allocated_grains": 4096,
+      "allocated_particles": 304096,
+      "growth_encode_ms": 0.0,
+      "growths": 0
+    },
+    "timings_ms": {
+      "dem": 0.45604489166666656,
+      "dem_pairs": 0.26212815833333336,
+      "dem_sdf": 0.18899753333333333,
+      "finish": 0.5086569333333334,
+      "fluid_and_readback": 13.955969175000002,
+      "prepare": 0.7719451083333334,
+      "terrain": 1.6417590333333334
+    },
+    "wall_seconds": 3.204219208,
+    "warmup_ticks": 30,
+    "water_balance_error_m3": 0.0,
+    "water_depth_m": 0.025487061589956284,
+    "water_particles": 116221,
+    "whole_water_balance_error_m3": 1.013777986003106e-07
+  },
+  "retention": {
+    "no_executable_or_app_copies_created": true,
+    "transient_state_removed_after_hash_comparison": true,
+    "latest_and_input_fixtures_preserved": true,
+    "free_disk_bytes": 41867915264
+  },
+  "preservation": {
+    "protected_files": {
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/.beads/.local_version": "7f7703782311c7e5abdfa236f341c35d6e53e6274b13f810f22b76e3abdeac35",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/.beads/beads.db": "53792066b1a4c4364cdbcc94ab457e1be81183352fcffe7fef32e48c0a84829d",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/.beads/beads.db-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/docs/CURRENT_STATE.md": "81798480c259b171b4c5e39b0e211f383e87dff17dd97958ff87dcf7fc32da14",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/docs/DEM_INTEGRATION_STATUS.md": "b24caec8b76121870bd0d7a692060b28af334f63497eb9661b8f37ab9993c0d7",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/.beads/daemon-2026-01-22T20-34-31.310.log.gz": "44ef64d492ec33fec302ffd2a44c7a5085351fca67de8afd5261e4773d0f25ea",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/docs/VERIFIED_STATE_2026-06-08.md": "850a888643f4c101c1ead51f3a8c999e863a90cf4728b07f38ee0478fdb1a741",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/docs/solutions/simulation-issues/dem-sdf-coupling-root-causes-2026-06-08.md": "79b0ebf9ff10964d5d76a5d0f44c79685e9287a748906a72ee9b4bfcaabba07a",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/plans/mpm-first-slice.md": "010a8408f6575298a15990c8cb4e9bf87cbc2a577c2949708e98360cec467c72",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/target/bundles/First Bend.app/Contents/MacOS/mining": "f86b867d1bff601217233bd7addcca85b283c8e10f1a56530915f58ebe6ac058",
+      "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/plant-screen-20261027/gpu-fixtures-v8/modern.save.json": "1e79eb2c62f7266f8d8ba3e1e93e79fd3f303317d2d16694656c3333782f46ba"
+    },
+    "unchanged": true,
+    "stash": "a6c6b857da29269271eebb03025767414eabde90",
+    "new_crash_reports": [],
+    "cleanup": {
+      "exit": 0,
+      "summary": "agent_browser: processes=0 rss_mib=0.0\nplaywright_tests: processes=0 rss_mib=0.0\nplaywright_mcp: processes=0 rss_mib=0.0\nchrome_for_testing: processes=0 rss_mib=0.0\nnode_ecosystem: processes=6 rss_mib=375.5\n"
+    }
+  },
+  "beads": {
+    "issue": "sluice-hybrid-20261028",
+    "status": "in_progress",
+    "unchanged_unrelated_literal_rows": 262,
+    "installed_sync_command_available": false,
+    "sync_command_result": {
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Error: unknown command \"sync\" for \"bd\"\nRun 'bd --help' for usage.\n"
+    },
+    "scope": "bd update, owned-row JSONL export, normal git pull/rebase/push; no hook/config modifications"
+  },
+  "known_limits": [
+    "Full FLIP pipeline is not periodic or selected in the game.",
+    "Tiled/cell-centric scatter and conservative phase geometry have no periodic implementation.",
+    "Cell marking, density correction, vorticity production, BC/SDF and advection remain to qualify.",
+    "Width-consistent world water/solids/gold ownership, local clogging/lateral feed and rendering remain unfinished.",
+    "No new native capture, FPS/physical-time improvement or empirical mining calibration established."
+  ],
+  "initial_failures": [
+    "CPU versus Metal division differed by one f32 rounding unit: oracle comparison now allows four epsilon units with an explicit bit-exact GPU seam-copy assertion.",
+    "Strict lint flagged indexing in the strengthened two-particle control; rewritten as enumerate without suppression."
+  ]
+}

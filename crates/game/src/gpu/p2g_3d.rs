@@ -145,6 +145,84 @@ impl GpuP2g3D {
         c_col1_buffer: Arc<wgpu::Buffer>,
         c_col2_buffer: Arc<wgpu::Buffer>,
     ) -> Self {
+        Self::new_with_options(
+            device,
+            width,
+            height,
+            depth,
+            max_particles,
+            include_sediment,
+            use_tiled_scatter,
+            positions_buffer,
+            velocities_buffer,
+            densities_buffer,
+            c_col0_buffer,
+            c_col1_buffer,
+            c_col2_buffer,
+            false,
+        )
+    }
+
+    /// Experimental repeated-Z transfer. Addresses wrap; APIC offsets remain local.
+    /// Uses the ordinary atomic scatter; tiled scatter is not periodic yet.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_periodic_z(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        max_particles: usize,
+        include_sediment: bool,
+        positions_buffer: Arc<wgpu::Buffer>,
+        velocities_buffer: Arc<wgpu::Buffer>,
+        densities_buffer: Arc<wgpu::Buffer>,
+        c_col0_buffer: Arc<wgpu::Buffer>,
+        c_col1_buffer: Arc<wgpu::Buffer>,
+        c_col2_buffer: Arc<wgpu::Buffer>,
+    ) -> Self {
+        Self::new_with_options(
+            device,
+            width,
+            height,
+            depth,
+            max_particles,
+            include_sediment,
+            false,
+            positions_buffer,
+            velocities_buffer,
+            densities_buffer,
+            c_col0_buffer,
+            c_col1_buffer,
+            c_col2_buffer,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_options(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        max_particles: usize,
+        include_sediment: bool,
+        use_tiled_scatter: bool,
+        positions_buffer: Arc<wgpu::Buffer>,
+        velocities_buffer: Arc<wgpu::Buffer>,
+        densities_buffer: Arc<wgpu::Buffer>,
+        c_col0_buffer: Arc<wgpu::Buffer>,
+        c_col1_buffer: Arc<wgpu::Buffer>,
+        c_col2_buffer: Arc<wgpu::Buffer>,
+        periodic_z: bool,
+    ) -> Self {
+        assert!(
+            !periodic_z || depth >= 2,
+            "periodic transfer needs at least two Z cells"
+        );
+        assert!(
+            !periodic_z || !use_tiled_scatter,
+            "tiled scatter is not periodic"
+        );
         let u_size = ((width + 1) * height * depth) as usize;
         let v_size = (width * (height + 1) * depth) as usize;
         let w_size = (width * height * (depth + 1)) as usize;
@@ -695,6 +773,14 @@ impl GpuP2g3D {
         {
             scatter_constants.insert("ELIDE_ZERO_ATOMICS".into(), 0.);
         }
+        if periodic_z {
+            scatter_constants.insert("PERIODIC_Z".into(), 1.);
+        }
+        let periodic_constants = if periodic_z {
+            std::collections::HashMap::from([("PERIODIC_Z".into(), 1.)])
+        } else {
+            std::collections::HashMap::new()
+        };
         let scatter_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("P2G 3D Scatter Pipeline"),
             layout: Some(&scatter_pipeline_layout),
@@ -719,7 +805,10 @@ impl GpuP2g3D {
             layout: Some(&divide_pipeline_layout),
             module: &divide_shader,
             entry_point: Some("divide_u"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &periodic_constants,
+                ..Default::default()
+            },
             cache: None,
         });
 
@@ -728,7 +817,10 @@ impl GpuP2g3D {
             layout: Some(&divide_pipeline_layout),
             module: &divide_shader,
             entry_point: Some("divide_v"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &periodic_constants,
+                ..Default::default()
+            },
             cache: None,
         });
 
@@ -737,7 +829,10 @@ impl GpuP2g3D {
             layout: Some(&divide_pipeline_layout),
             module: &divide_shader,
             entry_point: Some("divide_w"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &periodic_constants,
+                ..Default::default()
+            },
             cache: None,
         });
 

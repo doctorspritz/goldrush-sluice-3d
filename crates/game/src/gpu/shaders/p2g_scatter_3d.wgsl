@@ -15,6 +15,7 @@ const SCALE: f32 = 100000.0;
 // Adding a quantised integer zero cannot alter an accumulator. The reference
 // specialization retains those writes for exact GPU and whole-step controls.
 override ELIDE_ZERO_ATOMICS: bool = true;
+override PERIODIC_Z: bool = false;
 
 // Kernel constants
 const BSPLINE_SUPPORT_RADIUS: f32 = 1.5;  // Support range [-1.5, 1.5] for quadratic B-spline
@@ -60,6 +61,13 @@ fn quadratic_bspline_1d(x: f32) -> f32 {
         return 0.5 * t * t;
     }
     return 0.0;
+}
+
+// Only storage addresses wrap. The original stencil node still determines
+// its B-spline weight and local APIC offset on either side of the seam.
+fn transfer_z(k: i32) -> u32 {
+    if PERIODIC_Z { return u32(((k % i32(params.depth)) + i32(params.depth)) % i32(params.depth)); }
+    return u32(k);
 }
 
 // Index functions for staggered grids
@@ -116,7 +124,8 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     // Count particle in its home cell (for density projection + sediment fraction).
     let home_i = u32(clamp(i32(pos.x / cell_size), 0, i32(width) - 1));
     let home_j = u32(clamp(i32(pos.y / cell_size), 0, i32(height) - 1));
-    let home_k = u32(clamp(i32(pos.z / cell_size), 0, i32(depth) - 1));
+    var home_k = u32(clamp(i32(pos.z / cell_size), 0, i32(depth) - 1));
+    if PERIODIC_Z { home_k = transfer_z(i32(floor(pos.z / cell_size))); }
     let home_idx = cell_index(home_i, home_j, home_k);
 
     // Count sediment but let it contribute to grid momentum like water
@@ -150,7 +159,7 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
 
     for (var dk: i32 = -1; dk <= 1; dk++) {
         let nk = base_u.z + dk;
-        if (nk < 0 || nk >= i32(depth)) { continue; }
+        if (!PERIODIC_Z && (nk < 0 || nk >= i32(depth))) { continue; }
         let wz = u_wz[dk + 1];
 
         for (var dj: i32 = -1; dj <= 1; dj++) {
@@ -177,7 +186,7 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 // Mass-weighted momentum: m * (v + C*offset) * w
                 let momentum_x = mass_weight * (vel.x + affine_vel.x) * w;
 
-                let idx = u_index(u32(ni), u32(nj), u32(nk));
+                let idx = u_index(u32(ni), u32(nj), transfer_z(nk));
                 // Water and solids accumulate once in disjoint integer ranges.
                 // Divide combines their integer sums before conversion, preserving
                 // the original mixture transfer and a separate water-only field.
@@ -219,7 +228,7 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
 
     for (var dk: i32 = -1; dk <= 1; dk++) {
         let nk = base_v.z + dk;
-        if (nk < 0 || nk >= i32(depth)) { continue; }
+        if (!PERIODIC_Z && (nk < 0 || nk >= i32(depth))) { continue; }
         let wz = v_wz[dk + 1];
 
         for (var dj: i32 = -1; dj <= 1; dj++) {
@@ -245,7 +254,7 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 // Mass-weighted momentum: m * (v + C*offset) * w
                 let momentum_y = mass_weight * (vel.y + affine_vel.y) * w;
 
-                let idx = v_index(u32(ni), u32(nj), u32(nk));
+                let idx = v_index(u32(ni), u32(nj), transfer_z(nk));
                 // Water and solids accumulate once in disjoint integer ranges.
                 // Divide combines their integer sums before conversion, preserving
                 // the original mixture transfer and a separate water-only field.
@@ -288,7 +297,7 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     for (var dk: i32 = -1; dk <= 1; dk++) {
         let nk = base_w.z + dk;
         // W grid has depth+1 layers (indices 0 to depth inclusive)
-        if (nk < 0 || nk > i32(depth)) { continue; }
+        if (!PERIODIC_Z && (nk < 0 || nk > i32(depth))) { continue; }
         let wz = w_wz[dk + 1];
 
         for (var dj: i32 = -1; dj <= 1; dj++) {
@@ -313,7 +322,7 @@ fn scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                 // Mass-weighted momentum: m * (v + C*offset) * w
                 let momentum_z = mass_weight * (vel.z + affine_vel.z) * w;
 
-                let idx = w_index(u32(ni), u32(nj), u32(nk));
+                let idx = w_index(u32(ni), u32(nj), transfer_z(nk));
                 // Water and solids accumulate once in disjoint integer ranges.
                 // Divide combines their integer sums before conversion, preserving
                 // the original mixture transfer and a separate water-only field.

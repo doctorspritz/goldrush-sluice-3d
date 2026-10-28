@@ -11,6 +11,8 @@
 // - divide_v: processes V velocity grid (width x (height+1) x depth)
 // - divide_w: processes W velocity grid (width x height x (depth+1))
 
+override PERIODIC_Z: bool = false;
+
 const INV_SCALE: f32 = 0.00001;
 
 struct Params {
@@ -103,9 +105,13 @@ fn divide_w(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     let idx = id.z * params.width * params.height + id.y * params.width + id.x;
-    var integer_sum=w_sum[idx];var integer_weight=w_weight[idx];
+    // Scatter owns only canonical faces [0,depth). Each output invocation
+    // reads its accumulator independently: no cross-thread copy/read race.
+    var source_idx = idx;
+    if PERIODIC_Z && id.z == params.depth { source_idx = id.y * params.width + id.x; }
+    var integer_sum=w_sum[source_idx];var integer_weight=w_weight[source_idx];
     if params.paired_water!=0u {
-        let water_idx=idx+water_offset(params.width*params.height*(params.depth+1u));
+        let water_idx=source_idx+water_offset(params.width*params.height*(params.depth+1u));
         integer_sum+=w_sum[water_idx];integer_weight+=w_weight[water_idx];
     }
     let sum=f32(integer_sum)*INV_SCALE;let w=f32(integer_weight)*INV_SCALE;
@@ -117,10 +123,11 @@ fn divide_w(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     if params.paired_water!=0u {
         let water_idx=idx+water_offset(params.width*params.height*(params.depth+1u));
-        let sum=f32(w_sum[water_idx])*INV_SCALE;let weight=f32(w_weight[water_idx])*INV_SCALE;
+        let water_source_idx=source_idx+water_offset(params.width*params.height*(params.depth+1u));
+        let sum=f32(w_sum[water_source_idx])*INV_SCALE;let weight=f32(w_weight[water_source_idx])*INV_SCALE;
         if weight>0.0 {grid_w[water_idx]=sum/weight;}else{grid_w[water_idx]=0.0;}
         // Supported stationary water is distinct from an unsupported zero.
-        grid_w[water_idx+params.width*params.height*(params.depth+1u)]=select(0.0,1.0,w_weight[water_idx]>0);
+        grid_w[water_idx+params.width*params.height*(params.depth+1u)]=select(0.0,1.0,w_weight[water_source_idx]>0);
     } else if params.include_sediment==0u {
         grid_w[idx+params.width*params.height*(params.depth+1u)]=select(0.0,1.0,integer_weight>0);
     }
