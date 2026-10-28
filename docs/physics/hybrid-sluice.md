@@ -1,6 +1,6 @@
 # Hybrid simulation for consequential mining
 
-28 October 2026. Research and prototype specification, not an implemented solver or measured hybrid speedup. Baseline: `40a6aea`, after the verified direct-upload change. Simon explicitly authorized reduced-width and other approximations provided water, soil and processing still have convincing consequences. This supersedes treating exact original particle counts, grid sizes and iteration counts as mandatory for every future playable mode. Keep the original mode as a reference.
+28 October 2026. Research and implementation specification. The complete coupled hybrid mining mode remains unfinished; water-only prototype progress and measurements are reported below. Historical research baseline: `40a6aea`, after the verified direct-upload change. Simon explicitly authorized reduced-width and other approximations provided water, soil and processing still have convincing consequences. This supersedes treating exact original particle counts, grid sizes and iteration counts as mandatory for every future playable mode. Keep the original mode as a reference.
 
 The recommendation is a reduced-width, vertically resolved sluice model combined with cheap full-width hydraulic/bed state and fine visual detail. Separately investigate bulk wet-sand fields for ground, tailings and pond berms. A single cloned strip is a useful first experiment; lateral blockage, spill and off-centre feed require additional state before it can represent the complete plant.
 
