@@ -445,6 +445,50 @@ impl GpuFlip3D {
         cell_size: f32,
         max_particles: usize,
     ) -> Result<Self, String> {
+        Self::new_conservative_with_topology(
+            device,
+            width,
+            height,
+            depth,
+            cell_size,
+            max_particles,
+            false,
+        )
+    }
+
+    /// Experimental periodic conservative water/mineral exchange. Periodic
+    /// DEM contacts, width ownership and plant integration remain unqualified.
+    pub fn new_periodic_conservative(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        cell_size: f32,
+        max_particles: usize,
+    ) -> Result<Self, String> {
+        Self::new_conservative_with_topology(
+            device,
+            width,
+            height,
+            depth,
+            cell_size,
+            max_particles,
+            true,
+        )
+    }
+
+    fn new_conservative_with_topology(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        cell_size: f32,
+        max_particles: usize,
+        periodic_z: bool,
+    ) -> Result<Self, String> {
+        if periodic_z && (width == 0 || height == 0 || depth < 2 || !depth.is_multiple_of(2)) {
+            return Err("periodic conservative pressure needs positive XY and even Z >= 2".into());
+        }
         PhaseTransfer3D::preflight(&device.limits(), [width, height, depth], max_particles)?;
         let staging = (max_particles as u64)
             .checked_mul(80)
@@ -462,7 +506,7 @@ impl GpuFlip3D {
             max_particles,
             true,
             true,
-            false,
+            periodic_z,
         ))
     }
     pub fn conservative_phase_exchange(&self) -> bool {
@@ -512,10 +556,6 @@ impl GpuFlip3D {
         assert!(
             !periodic_z || (width > 0 && height > 0 && depth >= 2 && depth.is_multiple_of(2)),
             "periodic pressure needs nonzero X/Y and an even Z depth of at least two"
-        );
-        assert!(
-            !periodic_z || !conservative,
-            "periodic conservative phase geometry is not implemented"
         );
         let periodic_constants = if periodic_z {
             std::collections::HashMap::from([("PERIODIC_Z".to_string(), 1.)])
@@ -766,7 +806,11 @@ impl GpuFlip3D {
             }))
         });
         let phase_transfer = phase_metadata.as_ref().map(|metadata| {
-            PhaseTransfer3D::new(
+            (if periodic_z {
+                PhaseTransfer3D::new_periodic_z
+            } else {
+                PhaseTransfer3D::new
+            })(
                 device,
                 [width, height, depth],
                 max_particles as u32,
@@ -799,16 +843,30 @@ impl GpuFlip3D {
             phase_constants.insert("PERIODIC_Z".into(), 1.);
         }
         let pressure = if let Some(phase) = &phase_transfer {
-            GpuPressure3D::new_with_mobility(
-                device,
-                width,
-                height,
-                depth,
-                &p2g.grid_u_buffer,
-                &p2g.grid_v_buffer,
-                &p2g.grid_w_buffer,
-                phase.mobility.each_ref(),
-            )
+            if periodic_z {
+                GpuPressure3D::new_periodic_z(
+                    device,
+                    width,
+                    height,
+                    depth,
+                    &p2g.grid_u_buffer,
+                    &p2g.grid_v_buffer,
+                    &p2g.grid_w_buffer,
+                    Some(phase.mobility.each_ref()),
+                )
+                .expect("validated periodic phase pressure")
+            } else {
+                GpuPressure3D::new_with_mobility(
+                    device,
+                    width,
+                    height,
+                    depth,
+                    &p2g.grid_u_buffer,
+                    &p2g.grid_v_buffer,
+                    &p2g.grid_w_buffer,
+                    phase.mobility.each_ref(),
+                )
+            }
         } else if periodic_z {
             GpuPressure3D::new_periodic_z(
                 device,
@@ -834,7 +892,62 @@ impl GpuFlip3D {
         };
 
         let mut g2p =
-            if periodic_z {
+            if periodic_z && conservative {
+                GpuG2p3D::new_periodic_with_metadata(
+                    device,
+                    width,
+                    height,
+                    depth,
+                    max_particles,
+                    Arc::clone(&positions_buffer),
+                    Arc::clone(&velocities_buffer),
+                    Arc::clone(&c_col0_buffer),
+                    Arc::clone(&c_col1_buffer),
+                    Arc::clone(&c_col2_buffer),
+                    Arc::clone(&densities_buffer),
+                    &p2g.grid_u_buffer,
+                    &p2g.grid_v_buffer,
+                    &p2g.grid_w_buffer,
+                    &grid_u_old_buffer,
+                    &grid_v_old_buffer,
+                    &grid_w_old_buffer,
+                    &vorticity_mag_buffer,
+                    phase_transfer.as_ref().map(|p| &p.water[0]).unwrap_or(
+                        if paired_water_transfer {
+                            &p2g.grid_u_buffer
+                        } else {
+                            &water_p2g.grid_u_buffer
+                        },
+                    ),
+                    phase_transfer.as_ref().map(|p| &p.water[1]).unwrap_or(
+                        if paired_water_transfer {
+                            &p2g.grid_v_buffer
+                        } else {
+                            &water_p2g.grid_v_buffer
+                        },
+                    ),
+                    phase_transfer.as_ref().map(|p| &p.water[2]).unwrap_or(
+                        if paired_water_transfer {
+                            &p2g.grid_w_buffer
+                        } else {
+                            &water_p2g.grid_w_buffer
+                        },
+                    ),
+                    if conservative {
+                        [0; 3]
+                    } else if paired_water_transfer {
+                        [
+                            (((width + 1) * height * depth) as usize).div_ceil(64) as u64 * 256,
+                            ((width * (height + 1) * depth) as usize).div_ceil(64) as u64 * 256,
+                            ((width * height * (depth + 1)) as usize).div_ceil(64) as u64 * 256,
+                        ]
+                    } else {
+                        [0; 3]
+                    },
+                    phase_metadata.clone(),
+                    !conservative,
+                )
+            } else if periodic_z {
                 GpuG2p3D::new_periodic_z(
                     device,
                     width,
@@ -3462,7 +3575,7 @@ impl GpuFlip3D {
     }
     pub fn set_particle_volumes(&mut self, weights: Vec<f32>) {
         assert!(
-            !self.periodic_z || weights.iter().all(|w| *w == 1.),
+            !self.periodic_z || self.phase_transfer.is_some() || weights.iter().all(|w| *w == 1.),
             "periodic pilot needs uniform unit marker volumes"
         );
         self.p2g.volume_weights = weights;
@@ -3730,10 +3843,17 @@ impl GpuFlip3D {
                 self.gravel_obstacle_count, 0,
                 "periodic gravel ownership is not implemented"
             );
-            assert_eq!(
-                self.sediment_porosity_drag, 0.,
-                "periodic bed coupling is not implemented"
-            );
+            if self.phase_transfer.is_none() {
+                assert_eq!(
+                    self.sediment_porosity_drag, 0.,
+                    "periodic one-way bed coupling is not implemented"
+                );
+            } else {
+                assert!(
+                    !self.cpu_sediment_contacts,
+                    "periodic DEM contacts remain unqualified"
+                );
+            }
         }
 
         let profiling = std::env::var_os("SLUICE_PROFILE_STAGES").is_some();
@@ -4882,12 +5002,22 @@ impl GpuFlip3D {
         readback: ReadbackMode,
     ) -> bool {
         if self.periodic_z {
-            assert!(
-                densities
-                    .get(..positions.len())
-                    .is_some_and(|rho| rho.iter().all(|v| *v == 1.)),
-                "periodic pilot needs one water density per marker"
-            );
+            if self.phase_transfer.is_some() {
+                assert!(
+                    densities
+                        .get(..positions.len())
+                        .is_some_and(|rho| rho.iter().all(|v| v.is_finite() && *v >= 1.)),
+                    "periodic phase pilot needs one finite phase density per marker"
+                );
+            }
+            if self.phase_transfer.is_none() {
+                assert!(
+                    densities
+                        .get(..positions.len())
+                        .is_some_and(|rho| rho.iter().all(|v| *v == 1.)),
+                    "periodic pilot needs one water density per marker"
+                );
+            }
             assert!(
                 positions.len() <= self.max_particles,
                 "periodic pilot must not truncate water"

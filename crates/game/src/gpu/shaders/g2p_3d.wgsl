@@ -524,7 +524,8 @@ fn g2p(@builtin(global_invocation_id) id: vec3<u32>) {
     velocities[id.x] = final_velocity;
 }
 
-fn voxel_geometry_solid(q:vec3<i32>)->bool {
+fn voxel_geometry_solid(point:vec3<i32>)->bool {
+ let q=mac_storage_node(point);
  let n=vec3<i32>(i32(params.width),i32(params.height),i32(params.depth));
  if any(q<vec3(0)) || any(q>=n) {return false;}
  let nu=(params.width+1u)*params.height*params.depth;

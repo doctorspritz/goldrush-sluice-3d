@@ -123,7 +123,8 @@ fn compute_density_error(@builtin(global_invocation_id) id: vec3<u32>) {
 
 // Quadratic-kernel integral over a unit voxel: 2/3 for the centre interval,
 // 1/6 for each neighbour. Include edges/corners, rather than a per-face guess.
-fn phase_cell_type(q:vec3<i32>)->u32 {
+fn phase_cell_type(point:vec3<i32>)->u32 {
+    var q=point; if PERIODIC_Z {q.z=i32(periodic_k(q.z));}
     let bits=array<u32,3>(1u,4u,16u);
     let shape=vec3<i32>(i32(params.width),i32(params.height),i32(params.depth));
     var outside=false;
@@ -197,7 +198,8 @@ fn add_density_rhs(@builtin(global_invocation_id) id:vec3<u32>) {
 }
 
 @group(0) @binding(7) var<storage,read> volume_water_markers:array<u32>;
-fn volume_home_water(q:vec3<i32>)->bool {
+fn volume_home_water(point:vec3<i32>)->bool {
+ var q=point; if PERIODIC_Z {q.z=i32(periodic_k(q.z));}
  let shape=vec3<i32>(i32(params.width),i32(params.height),i32(params.depth));
  let kind=phase_cell_type(q);
  if kind==CELL_SOLID {return true;}

@@ -84,6 +84,7 @@ impl Default for SedimentParams3D {
 
 /// GPU-based Grid-to-Particle transfer for 3D simulation
 pub struct GpuG2p3D {
+    periodic_z: bool,
     particle_metadata_buffer: Arc<wgpu::Buffer>,
     conservative_phase_exchange: bool,
     width: u32,
@@ -238,7 +239,7 @@ impl GpuG2p3D {
     }
 
     /// Experimental periodic-Z gather with ordinary water or supported carriers.
-    /// Conservative phase exchange needs periodic geometry and is not enabled here.
+    /// Use new_periodic_with_metadata for conservative phase exchange.
     #[allow(clippy::too_many_arguments)]
     pub fn new_periodic_z(
         device: &wgpu::Device,
@@ -294,6 +295,63 @@ impl GpuG2p3D {
         )
     }
 
+    /// Periodic adjoint gather for shared conservative phase metadata.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_periodic_with_metadata(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth: u32,
+        max_particles: usize,
+        positions_buffer: Arc<wgpu::Buffer>,
+        velocities_buffer: Arc<wgpu::Buffer>,
+        c_col0_buffer: Arc<wgpu::Buffer>,
+        c_col1_buffer: Arc<wgpu::Buffer>,
+        c_col2_buffer: Arc<wgpu::Buffer>,
+        densities_buffer: Arc<wgpu::Buffer>,
+        grid_u_buffer: &wgpu::Buffer,
+        grid_v_buffer: &wgpu::Buffer,
+        grid_w_buffer: &wgpu::Buffer,
+        grid_u_old_buffer: &wgpu::Buffer,
+        grid_v_old_buffer: &wgpu::Buffer,
+        grid_w_old_buffer: &wgpu::Buffer,
+        vorticity_mag_buffer: &wgpu::Buffer,
+        water_grid_u_buffer: &wgpu::Buffer,
+        water_grid_v_buffer: &wgpu::Buffer,
+        water_grid_w_buffer: &wgpu::Buffer,
+        water_offsets: [u64; 3],
+        metadata: Option<Arc<wgpu::Buffer>>,
+        water_support: bool,
+    ) -> Self {
+        Self::new_with_options(
+            device,
+            width,
+            height,
+            depth,
+            max_particles,
+            positions_buffer,
+            velocities_buffer,
+            c_col0_buffer,
+            c_col1_buffer,
+            c_col2_buffer,
+            densities_buffer,
+            grid_u_buffer,
+            grid_v_buffer,
+            grid_w_buffer,
+            grid_u_old_buffer,
+            grid_v_old_buffer,
+            grid_w_old_buffer,
+            vorticity_mag_buffer,
+            water_grid_u_buffer,
+            water_grid_v_buffer,
+            water_grid_w_buffer,
+            water_offsets,
+            metadata,
+            water_support,
+            true,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn new_with_options(
         device: &wgpu::Device,
@@ -325,10 +383,6 @@ impl GpuG2p3D {
         assert!(
             !periodic_z || depth >= 2,
             "periodic transfer needs at least two Z cells"
-        );
-        assert!(
-            !periodic_z || metadata.is_none(),
-            "periodic phase geometry is not implemented"
         );
         let phase_buffers = metadata.is_some();
         assert!(
@@ -775,6 +829,7 @@ impl GpuG2p3D {
         });
 
         Self {
+            periodic_z,
             particle_metadata_buffer,
             conservative_phase_exchange: false,
             width,
@@ -821,7 +876,7 @@ impl GpuG2p3D {
 
     /// Set the boundary mask after uploading this step's shared parameters.
     pub fn set_open_boundaries(&self, queue: &wgpu::Queue, open: u32) {
-        assert!(open <= 63);
+        assert!(open <= 63 && (!self.periodic_z || open & 48 == 0));
         queue.write_buffer(
             &self.params_buffer,
             (std::mem::size_of::<G2pParams3D>() - 4) as u64,
@@ -857,7 +912,11 @@ impl GpuG2p3D {
             _padding: [
                 u32::from(self.conservative_phase_exchange),
                 if self.conservative_phase_exchange {
-                    63
+                    if self.periodic_z {
+                        15
+                    } else {
+                        63
+                    }
                 } else {
                     0
                 },

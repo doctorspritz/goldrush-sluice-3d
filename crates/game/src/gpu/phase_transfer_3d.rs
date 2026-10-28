@@ -27,6 +27,7 @@ pub struct BoundaryVolume3D {
 }
 
 pub struct PhaseTransfer3D {
+    periodic_z: bool,
     shape: [u32; 3],
     face_counts: [u32; 3],
     capacity: u32,
@@ -139,6 +140,33 @@ impl PhaseTransfer3D {
         particles: [&wgpu::Buffer; 5],
         metadata: &wgpu::Buffer,
         grids: [&wgpu::Buffer; 3],
+    ) -> Result<Self, String> {
+        Self::new_with_topology(device, shape, capacity, particles, metadata, grids, false)
+    }
+
+    /// Experimental periodic phase transfer; XY boundaries remain configurable.
+    pub fn new_periodic_z(
+        device: &wgpu::Device,
+        shape: [u32; 3],
+        capacity: u32,
+        particles: [&wgpu::Buffer; 5],
+        metadata: &wgpu::Buffer,
+        grids: [&wgpu::Buffer; 3],
+    ) -> Result<Self, String> {
+        if shape[2] < 2 {
+            return Err("periodic phases need at least two Z cells".into());
+        }
+        Self::new_with_topology(device, shape, capacity, particles, metadata, grids, true)
+    }
+
+    fn new_with_topology(
+        device: &wgpu::Device,
+        shape: [u32; 3],
+        capacity: u32,
+        particles: [&wgpu::Buffer; 5],
+        metadata: &wgpu::Buffer,
+        grids: [&wgpu::Buffer; 3],
+        periodic_z: bool,
     ) -> Result<Self, String> {
         Self::preflight(&device.limits(), shape, capacity as usize)?;
         let required = Self::storage_bytes(shape).ok_or("phase grid size overflow")?;
@@ -278,17 +306,22 @@ impl PhaseTransfer3D {
             bind_group_layouts: &[&layout],
             push_constant_ranges: &[],
         });
+        let constants = Self::topology_constants(periodic_z, true);
         let pipeline = |entry| {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: Some(&layout),
                 module: &shader,
                 entry_point: Some(entry),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &constants,
+                    ..Default::default()
+                },
                 cache: None,
             })
         };
         Ok(Self {
+            periodic_z,
             shape,
             face_counts: face_sizes.map(|n| n as u32),
             capacity,
@@ -305,6 +338,16 @@ impl PhaseTransfer3D {
             publish: pipeline("publish"),
             validate_particles: pipeline("validate_particles"),
         })
+    }
+    fn topology_constants(periodic: bool, sdf: bool) -> std::collections::HashMap<String, f64> {
+        let mut constants = std::collections::HashMap::new();
+        if periodic {
+            constants.insert("PERIODIC_Z".into(), 1.);
+            if sdf {
+                constants.insert("SDF_PERIODIC_Z".into(), 1.);
+            }
+        }
+        constants
     }
     /// All force predictors must be formed before `encode_response`.
     #[allow(clippy::too_many_arguments)]
@@ -343,7 +386,7 @@ impl PhaseTransfer3D {
                 // Standalone phase operators and gather default to open faces.
                 // The runtime writes its actual mask after prepare.
                 sediment: SedimentParams3D {
-                    _pad: [63.],
+                    _pad: [if self.periodic_z { 15. } else { 63. }],
                     ..sediment
                 },
             }),
@@ -433,7 +476,7 @@ impl PhaseTransfer3D {
     /// Share the boundary mask between cell support and paired affine transfers.
     /// Call after prepare; physical drag never reads this sediment padding.
     pub fn set_volume_boundaries(&self, queue: &wgpu::Queue, open: u32) {
-        assert!(open <= 63);
+        assert!(open <= 63 && (!self.periodic_z || open & 48 == 0));
         queue.write_buffer(
             &self.params,
             (std::mem::size_of::<Params>() - 4) as u64,
@@ -494,12 +537,16 @@ impl PhaseTransfer3D {
             bind_group_layouts: &[&layout],
             push_constant_ranges: &[],
         });
+        let constants = Self::topology_constants(self.periodic_z, false);
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Carried water pressure support"),
             layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: Some("classify"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &constants,
+                ..Default::default()
+            },
             cache: None,
         });
         (pipeline, group)
@@ -590,12 +637,16 @@ impl PhaseTransfer3D {
             bind_group_layouts: &[&layout],
             push_constant_ranges: &[],
         });
+        let constants = Self::topology_constants(self.periodic_z, true);
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Boundary volume pipeline"),
             layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: Some("count_cells_reflected"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &constants,
+                ..Default::default()
+            },
             cache: None,
         });
         let geometry = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -603,7 +654,10 @@ impl PhaseTransfer3D {
             layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: Some("publish_voxel_geometry"),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &constants,
+                ..Default::default()
+            },
             cache: None,
         });
         BoundaryVolume3D {

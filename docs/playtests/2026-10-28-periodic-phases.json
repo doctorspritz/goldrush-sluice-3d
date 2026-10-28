@@ -1,0 +1,278 @@
+{
+  "stage": "Experimental periodic conservative water/mineral exchange",
+  "baseline_commit": "a63ed949b4b9cdd1c4d894fb97d3de457511cc9f",
+  "started_utc": "2026-10-28T02:28:53.813136+00:00",
+  "goal_status": "active",
+  "full_operation_complete": false,
+  "periodic_conservative_operators": true,
+  "playable_strip_integrated": false,
+  "periodic_dem_contacts_qualified": false,
+  "periodic_game_save_qualified": false,
+  "recovery_calibrated": false,
+  "new_coupled_performance_or_visual_claim": false,
+  "source_manifest": {
+    "crates/game/src/gpu/flip_3d.rs": "cf5c12f832cc096dcf01128de00fc824cca3747b089df46c5e2b6ddb40b17508",
+    "crates/game/src/gpu/g2p_3d.rs": "1bd1e4811f2ad8a675d89a14684cf5c5692b17f31be49d1116627f0df05ff77e",
+    "crates/game/src/gpu/phase_transfer_3d.rs": "914fea91a4f22ce9a354f584257b7969c49ed9234f74eb95ea6251d2d4b06c22",
+    "crates/game/src/gpu/shaders/mac_wall_3d.wgsl": "309e2f0dab3812d9a261084614b8b096d32df24cfe15accf8dccbcb0481e8219",
+    "crates/game/src/gpu/shaders/phase_transfer_3d.wgsl": "eda311ff24adfa16cc0f38d173b9fd8b89a2f93cfb0478bdd7459d434f1661e4",
+    "crates/game/src/gpu/shaders/phase_pressure_cells_3d.wgsl": "af91efbb59f2aa7800f8d2eb336d10287acb2cd3ff451175abd204f19ac81de1",
+    "crates/game/src/gpu/shaders/density_error_3d.wgsl": "10db46c001decf4cac935193ce6298a6d837746e421225d53f47a03760f5163c",
+    "crates/game/src/gpu/shaders/g2p_3d.wgsl": "cf67d439c9afda2bcde6854d155ca28ccec5166b5fbd10014a9dea654c7b51b3",
+    "crates/mining-physics/tests/periodic_phases.rs": "9dbc053cfa1c2af8946460160cc84fad85c81a64eb64c573c39ad125916803b4",
+    "Cargo.lock": "cdcf28719ac98f0c2f974bb1e693ef1a972ebfbb3591f9daf60451db0af71ade"
+  },
+  "quality": {
+    "regression-tests": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 12947,
+      "discarded_log_bytes": 0
+    },
+    "mine-pipeline-tests": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 4364,
+      "discarded_log_bytes": 0
+    },
+    "cpu-phase-oracle": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 1606,
+      "discarded_log_bytes": 0
+    },
+    "lint-final": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 990,
+      "discarded_log_bytes": 0
+    },
+    "game-lint": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 365535,
+      "discarded_log_bytes": 0
+    },
+    "reference-ordinary": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 1285,
+      "discarded_log_bytes": 0
+    },
+    "reference-conservative": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 1390,
+      "discarded_log_bytes": 0
+    },
+    "build-flow-probe": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 652,
+      "discarded_log_bytes": 0
+    },
+    "candidate-ordinary": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 1294,
+      "discarded_log_bytes": 0
+    },
+    "candidate-conservative": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 1391,
+      "discarded_log_bytes": 0
+    }
+  },
+  "test_counts": {
+    "counts": {
+      "regression-tests": 36,
+      "mine-pipeline-tests": 5,
+      "cpu-phase-oracle": 7
+    },
+    "distinct_metal": 41,
+    "names": [
+      "a_large_live_shift_restores_and_continues_with_the_same_physical_state",
+      "articulated_machine_survives_original_water_pipeline_and_full_live_restore",
+      "batching_preserves_results_and_density_projection_preserves_momentum",
+      "closed_periodic_mixture_has_constant_volume_and_complete_seam_pressure_support",
+      "collocated_curl_and_confinement_match_analytic_periodic_flow",
+      "complete_periodic_conservative_runtime_retains_mixture_through_growth",
+      "conservative_large_live_shift_restores_and_continues_identically",
+      "conservative_pipeline_survives_excavation_pumping_camera_and_live_restore",
+      "coupled_resident_frames_and_growth_match_complete_synchronous_states",
+      "density_marking_gradient_and_positive_face_gather_match_physical_neighbours",
+      "divide_copies_canonical_seam_velocity_and_support_without_stale_data",
+      "every_open_face_allows_water_to_leave_without_a_false_sdf_contact",
+      "evolving_riffle_water_matches_repeated_domains_and_survives_storage_growth",
+      "finite_dug_feed_crosses_actual_screen_and_continues_in_original_wet_sluice",
+      "full_upload_preserves_raw_planes_short_inputs_and_untouched_tails",
+      "gather_matches_image_oracle_for_periodic_affine_pic_and_flip_fields",
+      "moving_soil_survives_original_water_pipeline_and_shell_restore",
+      "ordinary_w_boundary_passes_cover_upper_z_and_apply_both_slip_factors",
+      "original_pipeline_survives_excavation_pumping_camera_and_live_restore",
+      "packed_bed_contact_slides_without_cell_snaps_or_tangential_damping",
+      "paired_transfer_and_joined_readback_preserve_nonuniform_mixed_parcels",
+      "periodic_closed_gauge_and_incompatible_source_remain_visible",
+      "periodic_faces_match_independent_flux_projection_and_all_schedules",
+      "periodic_implicit_response_and_adjoint_gather_match_physical_image_oracle",
+      "periodic_strip_matches_four_repeated_domains_bit_for_bit",
+      "periodic_water_advects_through_multiple_seams_and_retains_velocity",
+      "phase_transfer_pressure_and_gather_match_oracle_with_momentum_and_freefall_controls",
+      "range_upload_preserves_prefix_suffix_affine_columns_and_volume_defaults",
+      "reallocation_preserves_transfers_parameters_and_warm_pressure",
+      "represented_volume_uses_integrated_voxel_support_without_surface_suction",
+      "resident_four_substep_frames_equal_complete_sync_water_states",
+      "scatter_preserves_physical_face_mass_momentum_and_single_home_counts",
+      "sediment_carrier_uses_wrapped_support_and_preserves_missing_components",
+      "signed_distance_interpolation_wraps_instead_of_creating_a_side_wall",
+      "sparse_carrier_preserves_constant_translation",
+      "spatial_payload_exchange_survives_the_water_pipeline_and_shell_restore",
+      "tiled_domains_match_strip_scatter_gather_and_affine_state",
+      "volume_feedback_sees_actual_water_gaps_across_the_periodic_seam",
+      "volume_repair_samples_the_faces_where_deltas_were_written",
+      "voxel_reflection_and_volume_are_invariant_when_a_real_block_crosses_the_seam",
+      "wet_feed_releases_its_water_into_real_flip_and_survives_restore"
+    ]
+  },
+  "state_equivalence": [
+    {
+      "variant": "ordinary",
+      "ticks": 150,
+      "reference_canonical_sha256": "9cae5a573699e2aa3ff573d235a4f21661999d6cbabd793590e82edfdf8a8dcd",
+      "candidate_canonical_sha256": "9cae5a573699e2aa3ff573d235a4f21661999d6cbabd793590e82edfdf8a8dcd",
+      "exact": true,
+      "normalisation": "Only unique unordered contact-history keys and JSON object keys; no particle/cell order, floats or signed zero normalised."
+    },
+    {
+      "variant": "conservative",
+      "ticks": 150,
+      "reference_canonical_sha256": "bfd395b2760ee4b2e6a53dcc62fa3aa9dd08545233456e7f3161cfbe2874a08b",
+      "candidate_canonical_sha256": "bfd395b2760ee4b2e6a53dcc62fa3aa9dd08545233456e7f3161cfbe2874a08b",
+      "exact": true,
+      "normalisation": "Only unique unordered contact-history keys and JSON object keys; no particle/cell order, floats or signed zero normalised."
+    }
+  ],
+  "reference_executable": {
+    "path": "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/target/playable/examples/flow_probe",
+    "sha256": "01f136a7501e00a8bdc95bc39daaffe07761e0b28fea4ced009071b0eb618ebd",
+    "results": [
+      {
+        "variant": "ordinary",
+        "exit": 0
+      },
+      {
+        "variant": "conservative",
+        "exit": 0
+      }
+    ]
+  },
+  "candidate_executable": {
+    "path": "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/target/playable/examples/flow_probe",
+    "sha256": "b9648a05081054ce0c4831c5bb559f2d1e3797363f5d579cdd737d6a335b984c",
+    "results": [
+      {
+        "variant": "ordinary",
+        "exit": 0
+      },
+      {
+        "variant": "conservative",
+        "exit": 0
+      }
+    ]
+  },
+  "normalisation": "Only unordered contact-history keys and JSON object keys; no particle/cell order or floating-point/signed-zero values changed.",
+  "focused_controls": {
+    "new_tests": 6,
+    "physical_image_response_cases": 15,
+    "phase_depths": [
+      2,
+      8,
+      12
+    ],
+    "geometry_translation_depths": [
+      8,
+      12
+    ],
+    "geometry_shift_cells": 3,
+    "water_gap_source_cases": 4,
+    "closed_uniform_cell_volume": 8,
+    "reference_volume": 8,
+    "mixed_growth_substeps": 12,
+    "resident_frames": 3,
+    "resident_substeps_per_frame": 4,
+    "momentum_tolerance_relative_solver_units": 2e-05,
+    "translational_energy_slack_solver_units": 1e-07,
+    "pressure_response_oracle": "double-precision FaceResponse, separately checked against dense phase/pressure systems by CPU tests",
+    "contact_and_grade_limits": "point/SDF minerals, explicit scalar relaxation controls; no periodic DEM, dense packing, field-grade calibration or lateral plant ownership qualification"
+  },
+  "lint": {
+    "existing_warning_count": 98,
+    "changed_primary_warning_count": 0,
+    "changed_primary_warnings": []
+  },
+  "format": {
+    "passed": true,
+    "scope": "changed phase/gather modules, new test and new periodic conservative API; changed host spans formatted, not whole legacy game"
+  },
+  "full_workspace_suite_run": false,
+  "initial_findings": [
+    "Strict test lint flagged an eight-argument helper; use shared sediment parameters instead of suppressing.",
+    "A task-local formatting helper used the parent directory rather than repository root; corrected before applying its patch. No source/runtime failure was hidden."
+  ],
+  "preservation": {
+    "hashes": {
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/.beads/.local_version": "7f7703782311c7e5abdfa236f341c35d6e53e6274b13f810f22b76e3abdeac35",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/.beads/beads.db": "53792066b1a4c4364cdbcc94ab457e1be81183352fcffe7fef32e48c0a84829d",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/.beads/beads.db-shm": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/docs/CURRENT_STATE.md": "81798480c259b171b4c5e39b0e211f383e87dff17dd97958ff87dcf7fc32da14",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/docs/DEM_INTEGRATION_STATUS.md": "b24caec8b76121870bd0d7a692060b28af334f63497eb9661b8f37ab9993c0d7",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/.beads/daemon-2026-01-22T20-34-31.310.log.gz": "44ef64d492ec33fec302ffd2a44c7a5085351fca67de8afd5261e4773d0f25ea",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/docs/VERIFIED_STATE_2026-06-08.md": "850a888643f4c101c1ead51f3a8c999e863a90cf4728b07f38ee0478fdb1a741",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/docs/solutions/simulation-issues/dem-sdf-coupling-root-causes-2026-06-08.md": "79b0ebf9ff10964d5d76a5d0f44c79685e9287a748906a72ee9b4bfcaabba07a",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/plans/mpm-first-slice.md": "010a8408f6575298a15990c8cb4e9bf87cbc2a577c2949708e98360cec467c72",
+      "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/target/bundles/First Bend.app/Contents/MacOS/mining": "f86b867d1bff601217233bd7addcca85b283c8e10f1a56530915f58ebe6ac058",
+      "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/plant-screen-20261027/gpu-fixtures-v8/modern.save.json": "1e79eb2c62f7266f8d8ba3e1e93e79fd3f303317d2d16694656c3333782f46ba"
+    },
+    "unchanged": true,
+    "stash": "a6c6b857da29269271eebb03025767414eabde90",
+    "new_crash_reports": [],
+    "cleanup_summary": "agent_browser: processes=0 rss_mib=0.0\nplaywright_tests: processes=0 rss_mib=0.0\nplaywright_mcp: processes=0 rss_mib=0.0\nchrome_for_testing: processes=0 rss_mib=0.0\nnode_ecosystem: processes=5 rss_mib=419.7\n"
+  },
+  "retention": {
+    "no_app_or_executable_copies_created": true,
+    "removed_transient_states": [
+      {
+        "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/periodic-phases-20261028/reference-ordinary.json.save.json",
+        "bytes": 29612099
+      },
+      {
+        "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/periodic-phases-20261028/candidate-ordinary.json.save.json",
+        "bytes": 29612099
+      },
+      {
+        "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/periodic-phases-20261028/reference-conservative.json.save.json",
+        "bytes": 28353725
+      },
+      {
+        "path": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/periodic-phases-20261028/candidate-conservative.json.save.json",
+        "bytes": 28353725
+      }
+    ],
+    "removed_transient_bytes": 115931648,
+    "free_disk_bytes": 40140296192
+  },
+  "beads": {
+    "issue": "sluice-hybrid-20261028",
+    "status": "in_progress",
+    "unrelated_rows_preserved": 262,
+    "sync": "Installed CLI lacks sync; attempted command recorded. Owned-row export and normal git synchronization used."
+  },
+  "remaining": [
+    "Width-consistent finite water/mineral/bed ownership and qualified contact topology",
+    "Graded washout/retention/burial/loading/cleanout and local lateral blockage/diversion/spill",
+    "Actual loaded coupled12/8/full-width performance comparisons; water-only gains do not qualify this mode",
+    "Periodic game saves, world inlet/outlet handoffs, rendering and sustained native combined checks",
+    "Every unfinished mine/equipment/pad/digging/mud/plant/pond/tailings/failure/calibration requirement"
+  ]
+}

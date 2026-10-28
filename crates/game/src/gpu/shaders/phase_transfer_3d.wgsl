@@ -1,3 +1,4 @@
+override PERIODIC_Z:bool=false;
 // Local backward-Euler drag eliminated jointly with pressure. Relative water
 // density is one. Body predictors use full gravity; pressure supplies buoyancy.
 struct SedimentParams {
@@ -86,7 +87,7 @@ fn scatter(@builtin(global_invocation_id) invocation:vec3<u32>) {
    let delta=vec3(dx,dy,dz);let q=center+delta;
    let reflected=voxel_wall_sample(mac_wall_sample(q,axis,u32(params.sediment.pad)),axis,walls);
    if !reflected.valid {continue;}
-   let destination=reflected.node;
+   let destination=mac_storage_node(reflected.node);
    let w=weight(frac.x-f32(dx))*weight(frac.y-f32(dy))*weight(frac.z-f32(dz));if w<=0. {continue;}
    let offset=(vec3<f32>(q)+stagger)*params.cell_size-p.xyz;
    let body=select(0.,params.gravity*params.dt,axis==1u);
@@ -117,17 +118,25 @@ fn write_water(axis:u32,index:u32,value:f32) {
 fn write_mobility(axis:u32,index:u32,value:f32) {
  if axis==0u {mobility_u[index+1u]=value;}else if axis==1u {mobility_v[index+1u]=value;}else {mobility_w[index+1u]=value;}
 }
+fn physical_face(global:u32)->u32 {
+ let plane=params.width*params.height;
+ if PERIODIC_Z && global>=params.nu+params.nv+params.depth*plane {return global-params.depth*plane;}
+ return global;
+}
 @compute @workgroup_size(128)
 fn normalise(@builtin(global_invocation_id) invocation:vec3<u32>) {
  let global=invocation.x;if global>=params.nu+params.nv+params.nw {return;}
- let face=axis_index(global);let index=1u+8u*global;let vw=wide_read(index);var velocity=0.;
+ let face=axis_index(global);let index=1u+8u*physical_face(global);let vw=wide_read(index);var velocity=0.;
  if vw>0. {velocity=wide_read(index+1u)/vw;}
  write_grid(face.x,face.y,velocity);write_water(face.x,face.y,velocity);
 }
 @compute @workgroup_size(128)
 fn assemble(@builtin(global_invocation_id) invocation:vec3<u32>) {
  let global=invocation.x;if global>=params.nu+params.nv+params.nw {return;}
- let face=axis_index(global);let index=1u+8u*global;let vw=wide_read(index);
+ // Canonical W0 writes both seam response copies. A redundant writer
+ // reading grid W0 here would race its in-place mixture update.
+ if PERIODIC_Z && global!=physical_face(global) {return;}
+ let face=axis_index(global);let index=1u+8u*physical_face(global);let vw=wide_read(index);
  let offset=((face.z+4u+63u)/64u)*64u+4u*face.y;
  var aux=vec4(0.);var mobility=0.;var q=0.;
  if vw>0. && atomicLoad(&wide_accumulators[0].low)==0u {
@@ -143,6 +152,12 @@ fn assemble(@builtin(global_invocation_id) invocation:vec3<u32>) {
  }
  write_grid(face.x,face.y,q);write_mobility(face.x,face.y,mobility);
  for(var c=0u;c<4u;c++) {write_water(face.x,offset+c,aux[c]);}
+ if PERIODIC_Z && face.x==2u && face.y<params.width*params.height {
+  let duplicate=face.y+params.width*params.height*params.depth;
+  write_grid(2u,duplicate,q);write_mobility(2u,duplicate,mobility);
+  let duplicate_offset=((face.z+4u+63u)/64u)*64u+4u*duplicate;
+  for(var c=0u;c<4u;c++) {write_water(2u,duplicate_offset+c,aux[c]);}
+ }
 }
 @compute @workgroup_size(1)
 fn publish() {
@@ -164,7 +179,7 @@ fn count_cells(@builtin(global_invocation_id) invocation:vec3<u32>) {
  let p=positions[id];let rho=metadata[id];
  if !all(p==p) || !finite(p.x) || !finite(p.y) || !finite(p.z) || !finite(p.w) || !finite(rho) || rho<1. {fail(2u);return;}
  let shape=vec3<i32>(i32(params.width),i32(params.height),i32(params.depth));
- let home=vec3<i32>(floor(p.xyz/params.cell_size));
+ let home=mac_storage_node(vec3<i32>(floor(p.xyz/params.cell_size)));
  if rho<=1. && all(home>=vec3(0)) && all(home<shape) {
   let index=(u32(home.z)*params.height+u32(home.y))*params.width+u32(home.x);
   atomicAdd(&wide_accumulators[cell_moment_start()+2u*index].low,1u);
@@ -172,7 +187,7 @@ fn count_cells(@builtin(global_invocation_id) invocation:vec3<u32>) {
  let volume=select(p.w,1.,p.w<=0.);
  let q=p.xyz/params.cell_size-vec3(.5);let center=vec3<i32>(floor(q+vec3(.5)));let frac=q-vec3<f32>(center);
  for(var dz=-1;dz<=1;dz++) {for(var dy=-1;dy<=1;dy++) {for(var dx=-1;dx<=1;dx++) {
-  let cell=center+vec3(dx,dy,dz);if any(cell<vec3(0)) || any(cell>=shape) {continue;}
+  let cell=mac_storage_node(center+vec3(dx,dy,dz));if any(cell<vec3(0)) || any(cell>=shape) {continue;}
   let w=weight(frac.x-f32(dx))*weight(frac.y-f32(dy))*weight(frac.z-f32(dz));if w<=0. {continue;}
   let index=(u32(cell.z)*params.height+u32(cell.y))*params.width+u32(cell.x);
   checked_add(cell_moment_start()+2u*index+1u,volume*w);
@@ -203,13 +218,15 @@ fn validate_particles(@builtin(global_invocation_id) invocation:vec3<u32>) {
 // diagonal blocked weights to other fluid nodes does not. Open exits retain
 // their lost kernel fraction. No physical particle is moved by this operator.
 @group(0) @binding(17) var<storage,read> volume_cell_types:array<u32>;
-fn volume_cell_index(q:vec3<i32>)->u32 {return (u32(q.z)*params.height+u32(q.y))*params.width+u32(q.x);}
-fn volume_admissible(q:vec3<i32>)->bool {
+fn volume_cell_index(point:vec3<i32>)->u32 {let q=mac_storage_node(point);return (u32(q.z)*params.height+u32(q.y))*params.width+u32(q.x);}
+fn volume_admissible(point:vec3<i32>)->bool {
+ let q=mac_storage_node(point);
  let shape=vec3<i32>(i32(params.width),i32(params.height),i32(params.depth));
  if any(q<vec3(0)) || any(q>=shape) {return false;}
  return volume_cell_types[volume_cell_index(q)]!=2u;
 }
-fn volume_open_exit(q:vec3<i32>)->bool {
+fn volume_open_exit(point:vec3<i32>)->bool {
+ let q=mac_storage_node(point);
  let shape=vec3<i32>(i32(params.width),i32(params.height),i32(params.depth));let open=u32(params.sediment.pad);
  for(var axis=0u;axis<3u;axis++) {
   if q[axis]<0 && (open&(1u<<(axis*2u)))!=0u {return true;}
@@ -227,7 +244,7 @@ fn count_cells_reflected(@builtin(global_invocation_id) invocation:vec3<u32>) {
  let id=invocation.x;if id>=params.count {return;}
  let p=positions[id];let rho=metadata[id];
  if !finite(p.x) || !finite(p.y) || !finite(p.z) || !finite(p.w) || !finite(rho) || rho<1. {fail(2u);return;}
- let shape=vec3<i32>(i32(params.width),i32(params.height),i32(params.depth));let home=vec3<i32>(floor(p.xyz/params.cell_size));
+ let shape=vec3<i32>(i32(params.width),i32(params.height),i32(params.depth));let home=mac_storage_node(vec3<i32>(floor(p.xyz/params.cell_size)));
  if rho<=1. && all(home>=vec3(0)) && all(home<shape) {atomicAdd(&wide_accumulators[cell_moment_start()+2u*volume_cell_index(home)].low,1u);}
  let volume=select(p.w,1.,p.w<=0.);
  // Folding can send several stencil weights to one cell. Bound the whole
@@ -275,7 +292,8 @@ fn cell_index(i:u32,j:u32,k:u32)->u32 {return (k*params.height+j)*params.width+i
 // Reuse the upper bit of the raw marker plane for immutable solid geometry.
 // Count <= capacity; the 16-byte metadata binding bounds capacity below 2^28.
 // The volume plane and all authoritative material counts retain their meaning.
-fn voxel_geometry_solid(q:vec3<i32>)->bool {
+fn voxel_geometry_solid(point:vec3<i32>)->bool {
+ let q=mac_storage_node(point);
  let n=vec3<i32>(i32(params.width),i32(params.height),i32(params.depth));
  if any(q<vec3(0)) || any(q>=n) {return false;}
  return (bitcast<u32>(water_u[cell_marker_offset()+volume_cell_index(q)])&0x80000000u)!=0u;
