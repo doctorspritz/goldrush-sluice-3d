@@ -81,6 +81,14 @@ impl Game {
         } else {
             Session::new_operation()
         };
+        if !demo {
+            if let Some(sampling) = crate::requested_water_sampling() {
+                self.session
+                    .sluice
+                    .set_water_sampling(sampling)
+                    .expect("A fresh shift has no owned water markers");
+            }
+        }
         self.snapshot_id += 1;
         self.command(Command::Reset(Box::new(self.session.clone())));
     }

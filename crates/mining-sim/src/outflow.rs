@@ -58,7 +58,7 @@ pub fn step(s: &mut Sluice, site: &mut Site, dt: f32) {
         return;
     }
     // Aggregate tiny particle volumes before converting to f32 terrain depths.
-    let volume = s.profile.particle_m3();
+    let volume = s.water_particle_m3();
     let mut deposits = BTreeMap::<usize, (f64, f64, f64)>::new();
     let mut landed = 0;
     s.outflow.retain_mut(|p| {

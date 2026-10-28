@@ -341,12 +341,16 @@ pub fn update(
                     "water_presentation": water.presentation_report(),
                 "water_mean_downstream_ms":game.session.sluice.water_speed(),"fluid_surface_ready":crate::water::surface_ready(&water),
                     "outflow_particles":sluice.outflow.len(),"terrain_water_splats":water.terrain_count(),"terrain_fine_cells":water.terrain_fine_count(),"detail_revision":detail.revision,"gold_balance_error_g":game.session.accounted_gold()-game.session.initial_gold_g});
-            report["phase_model"] =
-                serde_json::json!(if std::env::args().any(|a| a == "--conservative-phases") {
-                    "conservative-validation"
-                } else {
-                    "legacy"
-                });
+            report["phase_model"] = serde_json::json!(if !sluice.water_sampling().is_reference()
+                || std::env::args().any(|a| a == "--conservative-phases")
+            {
+                "conservative-validation"
+            } else {
+                "legacy"
+            });
+            report["water_markers_per_cell"] =
+                serde_json::json!(sluice.water_sampling().markers_per_cell());
+            report["water_marker_m3"] = serde_json::json!(sluice.water_particle_m3());
             report["failure"] = serde_json::json!(v.failure);
             report["paused"] = serde_json::json!(game.session.paused);
             report["max_water_speed_mps"] = serde_json::json!(max_water_speed);

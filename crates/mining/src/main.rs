@@ -23,10 +23,28 @@ mod water_surface_worker;
 
 use bevy::{prelude::*, window::WindowResolution};
 
+fn requested_water_sampling() -> Option<mining_sim::sluice::WaterSampling> {
+    let args: Vec<_> = std::env::args().collect();
+    args.iter()
+        .position(|a| a == "--water-markers")
+        .map(|index| {
+            args.get(index + 1)
+                .and_then(|v| v.parse::<u32>().ok())
+                .ok_or_else(|| "--water-markers needs 8, 4 or 2".to_string())
+                .and_then(mining_sim::sluice::WaterSampling::try_from)
+                .expect("Valid water marker sampling required")
+        })
+}
+
 fn main() -> AppExit {
     // Keep Bevy's compute/IO pools bounded as well as the single solver worker.
     use bevy::app::{TaskPoolOptions, TaskPoolPlugin};
     let (mut session, demo) = demo::initial();
+    if let Some(sampling) = requested_water_sampling() {
+        session.sluice.set_water_sampling(sampling).expect(
+            "Use --new-shift for a different sampling; saved shifts retain their marker volume",
+        );
+    }
     if std::env::args().any(|a| a == "--payload-motion") {
         let args: Vec<_> = std::env::args().collect();
         assert!(

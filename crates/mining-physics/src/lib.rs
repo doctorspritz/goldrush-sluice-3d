@@ -48,6 +48,7 @@ pub struct Hydraulics {
     terrain_loaded: bool,
     initial_grain_storage: usize,
     conservative_phases: bool,
+    conservative_requested: bool,
     grain_exit_capture: grain_exits::Capture,
     pub adapter_name: String,
 }
@@ -88,6 +89,7 @@ impl Hydraulics {
     /// packing and operating trials. The worker retains this choice on restore.
     pub fn with_conservative_phases(mut self) -> Self {
         eprintln!("PHYSICS: conservative phase exchange validation mode; packed-bed calibration remains open");
+        self.conservative_requested = true;
         self.conservative_phases = true;
         self.sluice = None;
         self
@@ -231,6 +233,7 @@ impl Hydraulics {
             terrain_loaded: false,
             initial_grain_storage: mining_sim::sluice::INITIAL_GRAIN_STORAGE,
             conservative_phases: false,
+            conservative_requested: false,
             grain_exit_capture: grain_exits::Capture::default(),
             adapter_name,
         })
@@ -248,6 +251,13 @@ impl Hydraulics {
         result
     }
     fn step_inner(&mut self, s: &mut Session) -> Result<(), String> {
+        let conservative = self.conservative_requested || !s.sluice.water_sampling().is_reference();
+        if conservative != self.conservative_phases {
+            // This saved mode needs represented-volume pressure and phase
+            // reaction, including after load/reset on an ordinary worker.
+            self.conservative_phases = conservative;
+            self.sluice = None;
+        }
         if s.paused {
             return Ok(());
         }
@@ -411,7 +421,7 @@ impl Hydraulics {
         l.flip.cpu_sediment_contacts = l.dem.coulomb_contacts;
         let profile = s.sluice.profile;
         let dx = profile.cell();
-        let particle_m3 = profile.particle_m3();
+        let particle_m3 = s.sluice.water_particle_m3();
         let n = (s.sluice.water_credit_m3 / particle_m3).floor() as usize;
         let available = profile
             .capacity()
@@ -420,8 +430,8 @@ impl Hydraulics {
             ((s.sluice.feed_water_credit_m3 / particle_m3).floor() as usize).min(available);
         let emitted = n.min(available - feed_emitted);
         for i in 0..emitted {
-            // Water volume uses eight particles per cell. Each new particle represents
-            // exactly dx^3/8 m3 withdrawn at the river intake by Session::step.
+            // The saved marker quadrature owns this exact finite intake volume.
+            // Marker count may change; discharge and grid resolution do not.
             let seq = s
                 .sluice
                 .solver_steps
@@ -599,10 +609,10 @@ impl Hydraulics {
         }
         // Volume/mass and bed feedback are independent of the physical grain
         // diameter used for drag. Legacy parcels retain their previous weights.
-        let mut weights = vec![1.0; nw];
+        let mut weights = vec![s.sluice.water_sampling().volume_scale(); nw];
         weights.extend(s.sluice.grains.iter().map(|g| {
             if g.volume_resolved {
-                (g.solid_volume() / particle_m3) as f32
+                (g.solid_volume() / profile.particle_m3()) as f32
             } else {
                 1.0
             }

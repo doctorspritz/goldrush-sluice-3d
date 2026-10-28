@@ -142,7 +142,7 @@ impl Plant {
             .profile
             .capacity()
             .saturating_sub(s.water.len() + s.outflow.len()) as f64
-            * s.profile.particle_m3()
+            * s.water_particle_m3()
             - s.water_credit_m3
             - s.feed_water_credit_m3;
         if moisture > room.max(0.) {

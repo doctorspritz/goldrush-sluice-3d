@@ -1111,7 +1111,8 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
     let geometry = SurfaceGeometry::new(sluice, p);
     let count = sluice.water.len() + sluice.outflow.len();
     let weight = count as f32 / count.clamp(1, MAX_SPLATS) as f32;
-    let radius = sluice.profile.cell() * 0.85 * weight.cbrt();
+    let radius =
+        sluice.profile.cell() * 0.85 * (weight * sluice.water_sampling().volume_scale()).cbrt();
     let mut slurry = mining_sim::slurry::SlurryField::new(sluice);
     let outlet_extinction = slurry.outlet_extinction(sluice);
     // Preserve the accepted outlet sample above. Airborne feed must not seed
@@ -1177,7 +1178,7 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
     let kernels = crate::fluid_surface::kernels(
         &points,
         sluice.profile.cell(),
-        sluice.profile.particle_m3() * weight as f64,
+        sluice.water_particle_m3() * weight as f64,
         &sampled
             .iter()
             .map(|(_, _, _, kind, _)| *kind == 0.)
@@ -1210,7 +1211,7 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
                 // Renormalization below retains the same represented volume;
                 // detached spray and the outlet keep their original support.
                 let radius = radius * (1.0 / 0.85);
-                let drop = (sluice.profile.particle_m3() * weight as f64 * 3.
+                let drop = (sluice.water_particle_m3() * weight as f64 * 3.
                     / (4. * std::f64::consts::PI))
                     .cbrt() as f32;
                 drop.min(radius) + (radius - drop.min(radius)) * kernel.bulk
@@ -1224,7 +1225,7 @@ pub(crate) fn samples(sluice: &mining_sim::Sluice) -> Vec<(u64, InstanceData)> {
                     center_radius: [c.x, c.y, c.z, radius],
                     velocity: [v.x, v.y, v.z, 0.],
                     shape: [
-                        (sluice.profile.particle_m3() * weight as f64
+                        (sluice.water_particle_m3() * weight as f64
                             / (4. / 3.
                                 * std::f64::consts::PI
                                 * (radius as f64).powi(3)
@@ -1417,7 +1418,7 @@ mod tests {
         });
         let before = serde_json::to_string(&session.sluice).unwrap();
         let data = samples(&session.sluice);
-        let parcel = session.sluice.profile.particle_m3();
+        let parcel = session.sluice.water_particle_m3();
         let mut reconstructed = 0.;
         for (_, kernel) in &data {
             let axis_length = |axis: [f32; 4]| {
@@ -1543,6 +1544,57 @@ mod tests {
             );
             let data = samples(&sluice);
             assert_eq!(data[0].1.slope_z != [0.; 4], clipped);
+        }
+    }
+
+    #[test]
+    fn reduced_water_sampling_retains_optical_volume_and_slurry_dilution() {
+        use mining_sim::sluice::{WaterParticle, WaterSampling};
+        for sampling in [
+            WaterSampling::Eight,
+            WaterSampling::Four,
+            WaterSampling::Two,
+        ] {
+            let mut s = mining_sim::Session::new();
+            s.sluice.placement = Some(mining_sim::Placement::suggested(&s.site));
+            s.sluice.set_water_sampling(sampling).unwrap();
+            let count = 240 / (8 / sampling.markers_per_cell()) as usize;
+            for id in 0..count {
+                s.sluice.water.push(WaterParticle {
+                    id: id as u64 + 1,
+                    position: mining_sim::Vec3::new(
+                        0.55 + (id % 10) as f32 * 0.005,
+                        0.20 + (id / 30) as f32 * 0.005,
+                        0.20 + (id % 3) as f32 * 0.005,
+                    ),
+                    velocity: mining_sim::Vec3::X * 0.4,
+                    affine: Default::default(),
+                });
+            }
+            let expected = s.sluice.stored_water_m3();
+            let (projected, _) =
+                mining_sim::slurry::SlurryField::new(&s.sluice).projected_volumes();
+            assert!((projected - expected).abs() < 1e-14);
+            let optical = samples(&s.sluice);
+            assert_eq!(optical.len(), count);
+            let integral: f64 = optical
+                .iter()
+                .map(|(_, v)| {
+                    let axes = Mat3::from_cols(
+                        Vec3::from_slice(&v.axis_x[..3]),
+                        Vec3::from_slice(&v.axis_y[..3]),
+                        Vec3::from_slice(&v.axis_z[..3]),
+                    );
+                    f64::from(v.shape[0]) * 4. / 3.
+                        * std::f64::consts::PI
+                        * f64::from(v.center_radius[3]).powi(3)
+                        * f64::from(axes.determinant().abs())
+                })
+                .sum();
+            assert!(
+                (integral - expected).abs() < expected * 3e-6,
+                "{sampling:?}: {integral} vs {expected}"
+            );
         }
     }
 }

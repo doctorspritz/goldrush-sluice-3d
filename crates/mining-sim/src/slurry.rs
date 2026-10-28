@@ -53,7 +53,7 @@ impl SlurryField {
             field.deposit(
                 p.position,
                 Cell {
-                    water: s.profile.particle_m3(),
+                    water: s.water_particle_m3(),
                     ..Default::default()
                 },
             );
@@ -254,7 +254,7 @@ pub fn diagnostics(s: &Sluice) -> serde_json::Value {
         "represented_grains":s.grains.iter().map(|g|g.represented_grains()).sum::<f64>(),
         "fine_parcels_below_200um":fine_count,
         "projected_water_m3":water,"projected_suspended_fines_m3":fines,
-        "projection_water_error_m3":water-s.water.len() as f64*s.profile.particle_m3(),
+        "projection_water_error_m3":water-s.water.len() as f64*s.water_particle_m3(),
         "projection_fines_error_m3":fines-s.grains.iter().filter(|g|g.kind==GrainKind::Sand&&!g.resting).map(|g|g.solid_volume()).sum::<f64>(),
         "outlet_extinction_m1":field.outlet_extinction(s),"optical_grid_m":CELL_M,
         "optics_calibrated":false,"independently_resolved_grain_collisions":false})

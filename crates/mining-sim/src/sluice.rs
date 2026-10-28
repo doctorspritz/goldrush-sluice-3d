@@ -112,6 +112,43 @@ impl HydraulicProfile {
     }
 }
 
+/// Physical water-marker quadrature. Grid spacing, pressure and grain contact
+/// geometry stay independent of this sampling choice. Reduced sampling remains
+/// an explicit approximation; its operating envelope needs qualification.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum WaterSampling {
+    #[default]
+    Eight,
+    Four,
+    Two,
+}
+impl WaterSampling {
+    pub fn markers_per_cell(self) -> u32 {
+        match self {
+            Self::Eight => 8,
+            Self::Four => 4,
+            Self::Two => 2,
+        }
+    }
+    pub fn volume_scale(self) -> f32 {
+        8.0 / self.markers_per_cell() as f32
+    }
+    pub fn is_reference(&self) -> bool {
+        *self == Self::Eight
+    }
+}
+impl TryFrom<u32> for WaterSampling {
+    type Error = String;
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            8 => Ok(Self::Eight),
+            4 => Ok(Self::Four),
+            2 => Ok(Self::Two),
+            _ => Err("Water markers per cell must be 8, 4 or 2".into()),
+        }
+    }
+}
+
 /// Original FLIP/APIC state, in the local simulation grid. Kept in the save,
 /// rather than recreated when a camera changes or a shift is restored.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -281,6 +318,8 @@ fn riffles_present() -> bool {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Sluice {
+    #[serde(default, skip_serializing_if = "WaterSampling::is_reference")]
+    water_sampling: WaterSampling,
     #[serde(default)]
     pub profile: HydraulicProfile,
     #[serde(default)]
@@ -332,6 +371,7 @@ pub struct Sluice {
 impl Default for Sluice {
     fn default() -> Self {
         Self {
+            water_sampling: WaterSampling::Eight,
             profile: HydraulicProfile::OriginalDemo,
             granular_packets: true,
             contact_model: ContactModel::Coulomb,
@@ -368,6 +408,29 @@ impl Default for Sluice {
     }
 }
 impl Sluice {
+    pub fn water_sampling(&self) -> WaterSampling {
+        self.water_sampling
+    }
+    /// Change future marker volume only while no existing marker owns water.
+    /// Pump/feed credits retain their actual volumes, independent of sampling.
+    pub fn set_water_sampling(&mut self, sampling: WaterSampling) -> Result<(), String> {
+        if sampling == self.water_sampling {
+            return Ok(());
+        }
+        if !self.water.is_empty() || !self.outflow.is_empty() {
+            return Err("Drain channel and airborne water before changing marker sampling".into());
+        }
+        if !sampling.is_reference()
+            && (self.profile != HydraulicProfile::OriginalDemo || !self.granular_packets)
+        {
+            return Err("Reduced water sampling requires the full-width granular sluice".into());
+        }
+        self.water_sampling = sampling;
+        Ok(())
+    }
+    pub fn water_particle_m3(&self) -> f64 {
+        self.profile.particle_m3() * f64::from(self.water_sampling.volume_scale())
+    }
     /// One-time migration for saves predating persistent water identities.
     pub fn ensure_water_ids(&mut self) {
         if self.next_water_id != 0 {
@@ -572,7 +635,7 @@ impl Sluice {
     /// Volume and positions come from FLIP; there is no analytic water-depth
     /// or sediment-capture model in the game layer.
     pub fn water_depth(&self) -> f32 {
-        self.water.len() as f32 * self.profile.particle_m3() as f32
+        self.water.len() as f32 * self.water_particle_m3() as f32
             / (self.profile.length() * self.profile.width())
     }
     pub fn outlet(&self) -> Option<Vec3> {
@@ -583,7 +646,7 @@ impl Sluice {
         self.stored_water_m3() + self.water_returned_m3
     }
     pub fn stored_water_m3(&self) -> f64 {
-        (self.water.len() + self.outflow.len()) as f64 * self.profile.particle_m3()
+        (self.water.len() + self.outflow.len()) as f64 * self.water_particle_m3()
             + self.water_credit_m3
             + self.feed_water_credit_m3
     }
@@ -798,7 +861,7 @@ impl Sluice {
                     .capacity()
                     .saturating_sub(self.water.len() + self.outflow.len())
                     as f64
-                    * self.profile.particle_m3()
+                    * self.water_particle_m3()
                     - self.water_credit_m3
                     - self.feed_water_credit_m3
                     - if screen { released_moisture } else { 0. };
@@ -1033,6 +1096,8 @@ impl Sluice {
             && self.tailings.valid()
             && self.concentrate.valid()
             && self.hopper.volume() <= 0.85001
+            && (self.water_sampling.is_reference()
+                || (self.profile == HydraulicProfile::OriginalDemo && self.granular_packets))
             && self.water.len() + self.outflow.len() <= self.profile.capacity()
             && self.outflow.iter().all(|p| {
                 p.position.is_finite()

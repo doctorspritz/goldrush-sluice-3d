@@ -6,6 +6,8 @@ The recommendation is a reduced-width, vertically resolved sluice model combined
 
 Implementation progress: the [periodic conservative phase extension](../playtests/2026-10-28-periodic-phases.md) now connects water/mineral reaction, real voxel reflection, represented volume, carried pressure support and actual-water surface feedback across the strip seam.41 distinct Metal and7 CPU phase checks pass, including exact complete ordinary/conservative operation states versus the pre-change executable. The preceding water-only resident timings remain1.472/1.769x physical time for12/8cm; no mixed-strip performance is inferred. Full-width material/bed/contact ownership, lateral loading/clogging/diversion, game saves/world transfers, rendering and native combined qualification remain open. The installed app stays unchanged.
 
+The [saved full-width water-sampling stage](../playtests/2026-10-28-water-sampling.md) now owns water volume consistently at8/4/2 markers per cell without changing the 1cm grid or38cm contact domain.52 CPU,83 app and14 Metal checks pass, and reference operation states/frozen PNGs remain exact. One short native conservative8/4 comparison observes56.35/104.93FPS but only0.42983/0.48158x physical time; both fail real time. Outlet beading and slow surface reconstruction remain unqualified in `menace-7rn`. This does not complete the reduced-width/lane/bed integration below.
+
 ## Published implementations and what they support
 
 | Primary source inspected | Technique worth borrowing | Limit for this game |

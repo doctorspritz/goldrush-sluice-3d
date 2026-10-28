@@ -97,6 +97,15 @@ struct Save {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     plant: Option<crate::plant::Plant>,
 }
+#[derive(Serialize, Deserialize)]
+struct SamplingSave {
+    version: u32,
+    shift: Save,
+}
+#[derive(Deserialize)]
+struct SaveVersion {
+    version: u32,
+}
 impl Default for Session {
     fn default() -> Self {
         Self::new()
@@ -731,7 +740,7 @@ impl Session {
                 .capacity()
                 .saturating_sub(self.sluice.water.len() + self.sluice.outflow.len())
                 as f64
-                * self.sluice.profile.particle_m3()
+                * self.sluice.water_particle_m3()
                 - self.sluice.water_credit_m3
                 - self.sluice.feed_water_credit_m3;
             (self.sluice.flow_m3s * dt).min(room.max(0.0) as f32)
@@ -1022,7 +1031,7 @@ impl Session {
             };
         let mut site = self.site.snapshot();
         site.normalize_bed_age();
-        serde_json::to_string(&Save {
+        let save = Save {
             // v8 preserves spatial payload/rigid parcels and boundary receipts.
             version: if self.plant.is_some() {
                 14
@@ -1047,14 +1056,35 @@ impl Session {
             water_balance: Some(self.water_balance.clone()),
             material_motion: self.material_motion.clone(),
             active_soil: self.active_soil.clone(),
-        })
+        };
+        if self.sluice.water_sampling().is_reference() {
+            serde_json::to_string(&save)
+        } else {
+            serde_json::to_string(&SamplingSave {
+                version: 15,
+                shift: save,
+            })
+        }
         .map_err(|e| e.to_string())
     }
     pub fn load_json(json: &str) -> Result<Self, String> {
         if json.len() > 128_000_000 {
             return Err("Save file is too large".into());
         }
-        let s: Save = serde_json::from_str(json).map_err(|e| e.to_string())?;
+        let header: SaveVersion = serde_json::from_str(json).map_err(|e| e.to_string())?;
+        let sampled = header.version == 15;
+        let s: Save = if sampled {
+            let envelope: SamplingSave = serde_json::from_str(json).map_err(|e| e.to_string())?;
+            if envelope.version != 15 || !(2..=14).contains(&envelope.shift.version) {
+                return Err("Invalid water-sampling save envelope".into());
+            }
+            envelope.shift
+        } else {
+            serde_json::from_str(json).map_err(|e| e.to_string())?
+        };
+        if sampled == s.sluice.water_sampling().is_reference() {
+            return Err("Water sampling does not match the save version".into());
+        }
         if (s.version == 14) != s.plant.is_some() {
             return Err("Invalid plant save envelope".into());
         }
