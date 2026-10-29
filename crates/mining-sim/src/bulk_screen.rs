@@ -7,6 +7,15 @@ use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BulkContact {
+    /// Saved models 2/3: point friction removes translation without rolling.
+    #[default]
+    PointFrictionV1,
+    /// Saved model 4: spherical basal contact couples translation and spin.
+    RollingSpheresV2,
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BulkDeck {
     pub cells_downstream: u16,
@@ -16,6 +25,9 @@ pub struct BulkDeck {
     /// Missing in saved model 2; never silently migrate its force law.
     #[serde(default)]
     pub projection: BulkProjection,
+    /// Missing in older saves; retain their point-friction law exactly.
+    #[serde(default)]
+    pub contact: BulkContact,
 }
 impl Default for BulkDeck {
     fn default() -> Self {
@@ -24,6 +36,7 @@ impl Default for BulkDeck {
             cells_across: 4,
             soil_yield_pa: 25.,
             projection: BulkProjection::SmoothCellsV2,
+            contact: BulkContact::RollingSpheresV2,
         }
     }
 }
@@ -32,6 +45,8 @@ impl BulkDeck {
         (1..=64).contains(&self.cells_downstream)
             && (1..=16).contains(&self.cells_across)
             && (0.0..=200.).contains(&self.soil_yield_pa)
+            && !(self.contact == BulkContact::RollingSpheresV2
+                && self.projection == BulkProjection::CellBinsV1)
     }
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -224,6 +239,7 @@ impl BulkState {
                     let adhesive = self.adhesion(&p);
                     let mu = screen.config.friction_mu / (1. + gamma);
                     let mut relative = p.velocity - deck_velocity;
+                    let incident_normal_speed = (-relative.dot(normal)).max(0.);
                     relative -= normal * relative.dot(normal);
                     let mut acceleration = if self.config.projection == BulkProjection::CellBinsV1 {
                         // Depth gradients cause local load to spread/overflow instead
@@ -259,12 +275,50 @@ impl BulkState {
                                 * (tangent * (slopes.x * angle.cos()) + screen.across() * slopes.y)
                     };
                     acceleration -= normal * acceleration.dot(normal);
-                    relative += acceleration * h;
+                    // A new landing already advanced through this interval's
+                    // gravity and world translation. Do not integrate it twice.
+                    let landed_rolling =
+                        landed && self.config.contact == BulkContact::RollingSpheresV2;
+                    if !landed_rolling {
+                        relative += acceleration * h;
+                    }
                     let friction = mu * G * screen.config.slope_deg.to_radians().cos()
                         + self.transport_adhesion(&p, cell.depth_m);
                     let speed = relative.length();
-                    relative *= (1. - friction * h / speed.max(1e-30)).max(0.);
-                    p.position += (off1 - off0) + relative * h;
+                    if self.config.contact == BulkContact::RollingSpheresV2 {
+                        let drag = self.transport_adhesion(&p, cell.depth_m);
+                        if adhesive <= drive {
+                            // The same impulse acts on the centre and on its
+                            // radius arm. Static contact can roll, not freeze.
+                            rolling_friction(
+                                &mut relative,
+                                &mut p.angular_velocity,
+                                normal,
+                                r,
+                                mu * if landed_rolling {
+                                    incident_normal_speed
+                                } else {
+                                    G * screen.config.slope_deg.to_radians().cos() * h
+                                },
+                            );
+                        }
+                        // Bonded fines retain the declared cohesive arrest;
+                        // unbonded wet contact uses the existing adhesion drag.
+                        // This is not a calibrated rolling-resistance law.
+                        let resistance = if adhesive > drive { friction } else { drag };
+                        if resistance > 0. {
+                            let factor =
+                                (1. - resistance * h / relative.length().max(1e-30)).max(0.);
+                            relative *= factor;
+                            let torsion = normal * p.angular_velocity.dot(normal);
+                            p.angular_velocity = torsion + (p.angular_velocity - torsion) * factor;
+                        }
+                    } else {
+                        relative *= (1. - friction * h / speed.max(1e-30)).max(0.);
+                    }
+                    if !landed_rolling {
+                        p.position += (off1 - off0) + relative * h;
+                    }
                     p.velocity = relative + deck_velocity;
                     local = screen.to_local(p.position - off1);
                     let correction = target - screen.deck_distance(local);
@@ -328,7 +382,14 @@ impl BulkState {
                 }
                 p.grain.position = p.position.as_vec3();
                 p.grain.velocity = p.velocity.as_vec3();
-                p.grain.resting = residence.on_deck && !screen.motor_on;
+                p.grain.resting = residence.on_deck
+                    && !screen.motor_on
+                    && (self.config.contact == BulkContact::PointFrictionV1
+                        || (p.velocity.length_squared() < 1e-12
+                            && p.angular_velocity.length_squared() < 1e-12));
+                if self.config.contact == BulkContact::RollingSpheresV2 {
+                    p.grain.angular_velocity = p.angular_velocity.as_vec3();
+                }
                 rotate_grain(&mut p, h);
                 if !super::valid_grain(&p.grain)
                     || !p.position.is_finite()
@@ -365,6 +426,21 @@ impl BulkState {
         }
         Ok(())
     }
+}
+/// Coulomb impulse per unit mass for a spherical contact, I/m = 2r²/5.
+/// The contact mobility is 1 + mr²/I = 7/2. Work is dissipative in the
+/// deck frame; a moving deck may supply the corresponding impulse work.
+fn rolling_friction(
+    velocity: &mut DVec3,
+    spin: &mut DVec3,
+    normal: DVec3,
+    radius: f64,
+    maximum_delta_v: f64,
+) {
+    let slip = *velocity + spin.cross(-normal * radius);
+    let impulse = -slip * (1. / 3.5_f64).min(maximum_delta_v / slip.length().max(1e-30));
+    *velocity += impulse;
+    *spin += -normal.cross(impulse) * (2.5 / radius);
 }
 fn passage_threshold(id: u64) -> f64 {
     // Counter-based deterministic sample, saved parcel ID; no process RNG or
@@ -447,8 +523,68 @@ mod transport_tests {
         assert_eq!(modern.transport_adhesion(&p, 0.), modern.adhesion(&p));
         let old = BulkState::new(BulkDeck {
             projection: BulkProjection::CellBinsV1,
+            contact: BulkContact::PointFrictionV1,
             ..Default::default()
         });
         assert_eq!(old.transport_adhesion(&p, 1.), old.adhesion(&p));
+    }
+}
+
+#[cfg(test)]
+mod rolling_tests {
+    use super::*;
+    #[test]
+    fn no_slip_plane_has_five_sevenths_downhill_acceleration() {
+        for angle in [1.0_f64, 12., 25.] {
+            let theta = angle.to_radians();
+            let normal = DVec3::new(theta.sin(), theta.cos(), 0.);
+            let downhill = DVec3::new(theta.cos(), -theta.sin(), 0.);
+            for radius in [0.00005, 0.003, 0.01] {
+                let mut v = DVec3::ZERO;
+                let mut spin = DVec3::ZERO;
+                for _ in 0..240 {
+                    v += downhill * (G * theta.sin() / 240.);
+                    rolling_friction(&mut v, &mut spin, normal, radius, G / 240.);
+                }
+                let expected = downhill * (5. / 7. * G * theta.sin());
+                assert!(v.distance(expected) < 1e-11);
+                assert!((v + spin.cross(-normal * radius)).length() < 1e-11);
+                assert!(spin.distance(normal.cross(expected) / radius) < 1e-7);
+            }
+        }
+    }
+    #[test]
+    fn contact_impulse_obeys_coulomb_bound_pivot_momentum_and_relative_energy() {
+        for i in 0..128 {
+            let normal = DVec3::new(0.2 + (i as f64).sin(), 1., (i as f64 * 0.7).cos()).normalize();
+            let radius = 0.00005 + i as f64 * 0.0001;
+            let seed = DVec3::new((i as f64 * 0.3).cos(), 0.2, (i as f64 * 0.9).sin());
+            let v0 = seed - normal * seed.dot(normal);
+            let w0 = DVec3::new(23., -71., i as f64 - 60.);
+            for cap in [0., 0.00001, 0.1, 10.] {
+                let mut v = v0;
+                let mut spin = w0;
+                let inertia = 0.4 * radius * radius;
+                let energy0 = 0.5 * (v0.length_squared() + inertia * w0.length_squared());
+                let momentum0 = w0 * inertia + (normal * radius).cross(v0);
+                rolling_friction(&mut v, &mut spin, normal, radius, cap);
+                let energy1 = 0.5 * (v.length_squared() + inertia * spin.length_squared());
+                let momentum1 = spin * inertia + (normal * radius).cross(v);
+                assert!(energy1 <= energy0 + 2e-14);
+                assert!((v - v0).length() <= cap + 1e-14);
+                assert!(momentum1.distance(momentum0) < 2e-15);
+                assert!((v - v0).dot(normal).abs() < 1e-14);
+            }
+        }
+    }
+    #[test]
+    fn existing_pure_roll_and_normal_spin_are_not_damped_as_sliding() {
+        let radius = 0.002;
+        let normal = DVec3::Y;
+        let mut spin = DVec3::new(0., 12., -500.);
+        let mut v = DVec3::X;
+        let initial = (v, spin);
+        rolling_friction(&mut v, &mut spin, normal, radius, 1.);
+        assert_eq!((v, spin), initial);
     }
 }

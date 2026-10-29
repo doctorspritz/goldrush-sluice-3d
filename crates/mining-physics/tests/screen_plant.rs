@@ -192,7 +192,7 @@ fn wet_overburden_and_real_river_water_build_a_finite_clearable_deck() {
     let bed_volume = field.integrated_volume_m3();
     assert!(bed_volume > 0.0001, "held bed{bed_volume}");
     assert!(field.cells().iter().any(|c| c.blinded > 0.));
-    assert_eq!(s.plant.as_ref().unwrap().model_version, 3);
+    assert_eq!(s.plant.as_ref().unwrap().model_version, 4);
     s.sluice.feed_on = false;
     let json = s.save_json().unwrap();
     let loaded = Session::load_json(&json).unwrap();
@@ -222,6 +222,6 @@ fn wet_overburden_and_real_river_water_build_a_finite_clearable_deck() {
     assert!((s.stored_water_m3() - stored).abs() < 1e-10);
     println!(
         "{}",
-        serde_json::json!({"wet_bed":true,"model_version":3,"ticks":240,"held_volume_m3":bed_volume,"wet_source":wet,"source_water_m3":packet.water_m3,"gold_error_g":s.accounted_gold()-s.initial_gold_g,"bulk_error_m3":s.accounted_material().volume()-baseline.volume(),"water_error_m3":s.water_balance_error_m3(),"saved_live_plant":true,"actual_stopped_cleanup":true})
+        serde_json::json!({"wet_bed":true,"model_version":4,"ticks":240,"held_volume_m3":bed_volume,"wet_source":wet,"source_water_m3":packet.water_m3,"gold_error_g":s.accounted_gold()-s.initial_gold_g,"bulk_error_m3":s.accounted_material().volume()-baseline.volume(),"water_error_m3":s.water_balance_error_m3(),"saved_live_plant":true,"actual_stopped_cleanup":true})
     );
 }

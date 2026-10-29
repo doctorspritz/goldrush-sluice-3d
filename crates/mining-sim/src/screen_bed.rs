@@ -455,6 +455,6 @@ mod tests {
         s.set_bulk_deck(Some(old)).unwrap();
         assert_eq!(s.processing_model_version(), 2);
         s.set_bulk_deck(Some(BulkDeck::default())).unwrap();
-        assert_eq!(s.processing_model_version(), 3);
+        assert_eq!(s.processing_model_version(), 4);
     }
 }

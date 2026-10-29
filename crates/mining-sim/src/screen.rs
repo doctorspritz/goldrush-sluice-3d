@@ -9,8 +9,8 @@ pub use bed::{BulkBedCell, BulkBedField, BulkBedSample, BulkProjection};
 #[path = "bulk_screen.rs"]
 mod bulk;
 use crate::{sluice::Grain, Material, Vec3};
-pub use bulk::BulkDeck;
 use bulk::BulkState;
+pub use bulk::{BulkContact, BulkDeck};
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 
@@ -534,6 +534,12 @@ impl Screen {
         self.bulk.as_ref().map(|b| &b.config)
     }
     pub fn processing_model_version(&self) -> u32 {
+        if self
+            .bulk_deck()
+            .is_some_and(|c| c.contact == BulkContact::RollingSpheresV2)
+        {
+            return 4;
+        }
         match self.bulk_deck().map(|c| c.projection) {
             None => 1,
             Some(BulkProjection::CellBinsV1) => 2,

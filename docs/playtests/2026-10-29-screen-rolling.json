@@ -1,0 +1,2158 @@
+{
+  "stage": "bulk spherical rolling / grading CPU checkpoint",
+  "date": "2026-10-29",
+  "baseline": "553b4ddd47ce7a033902d6cad82c4e27b375854c",
+  "stage_status": "in_progress; CPU validated, actual Metal and native checks pending",
+  "goal_status": "active",
+  "full_operation_complete": false,
+  "empirically_calibrated": false,
+  "real_time_achieved": false,
+  "default_screen_changed": false,
+  "installed_app_changed": false,
+  "native_candidate_built": false,
+  "new_native_performance": null,
+  "source_manifest": {
+    "crates/mining-physics/tests/screen_plant.rs": "81ee08d0b0e995b82f23f7ef4c92bbedd0db45f2c396c46984322ac915d44d48",
+    "crates/mining-sim/examples/screen_grading_probe.rs": "6a016e0ca993cfb2a07cf48cf92749b7ed52679d6c270fbeb9537391381a7581",
+    "crates/mining-sim/src/bulk_screen.rs": "8c542c49e391d870aba6781461f6bb8946bc011a03bfc8eff539d1ccf60a2692",
+    "crates/mining-sim/src/screen.rs": "c1be62c57324911d3706e9d566f7fc18346fbbd6f4f930f43dd65894da3fe797",
+    "crates/mining-sim/src/screen_bed.rs": "9859e380ae31c053de3778d9019c761188605ddb00aaf53d8890e2b767cf6b41",
+    "crates/mining-sim/tests/bulk_screen.rs": "1df4ccbc30c8509ac6085669c0f9148814b6ddbab4beaacea9a15ede17954f62",
+    "crates/mining/src/demo.rs": "75200e122a1fbaf6b6d351ef04f7682210e0db2f31c99a472b995160aaa9e398"
+  },
+  "quality": {
+    "rolling-domain": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 24629,
+      "discarded_log_bytes": 0
+    },
+    "grading-rolling": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 16264,
+      "discarded_log_bytes": 0
+    },
+    "legacy-build-after": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 0,
+      "discarded_log_bytes": 0
+    },
+    "legacy-model2-after": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 126,
+      "discarded_log_bytes": 0
+    },
+    "legacy-model3-after": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 126,
+      "discarded_log_bytes": 0
+    },
+    "lint-rolling-domain": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 293,
+      "discarded_log_bytes": 0
+    },
+    "lint-rolling-app": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 1103,
+      "discarded_log_bytes": 0
+    },
+    "lint-rolling-circuit": {
+      "exit": 0,
+      "stopped_reason": null,
+      "log_bytes": 990,
+      "discarded_log_bytes": 0
+    }
+  },
+  "format": {
+    "exit": 0,
+    "files": [
+      "crates/mining-physics/tests/screen_plant.rs",
+      "crates/mining-sim/examples/screen_grading_probe.rs",
+      "crates/mining-sim/src/bulk_screen.rs",
+      "crates/mining-sim/src/screen.rs",
+      "crates/mining-sim/src/screen_bed.rs",
+      "crates/mining-sim/tests/bulk_screen.rs",
+      "crates/mining/src/demo.rs"
+    ]
+  },
+  "domain_cpu_checks": 159,
+  "domain_check_groups": [
+    103,
+    15,
+    10,
+    11,
+    11,
+    9
+  ],
+  "grading_diagnostic_cases_per_version": 32,
+  "grading_reference_model3": [
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 52524,
+      "cpu_seconds": 0.080185083,
+      "diameter_m": 9.999999747378752e-05,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": false
+    },
+    {
+      "active": 20,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.010082041,
+      "diameter_m": 9.999999747378752e-05,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 3.527223921918442e-08,
+      "model": 3,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 44,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 88459,
+      "cpu_seconds": 0.141931958,
+      "diameter_m": 9.999999747378752e-05,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.003664292,
+      "diameter_m": 9.999999747378752e-05,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 3.977890927454158e-08,
+      "model": 3,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 52524,
+      "cpu_seconds": 0.07589775,
+      "diameter_m": 9.999999747378752e-05,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": true
+    },
+    {
+      "active": 32,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.014322917,
+      "diameter_m": 9.999999747378752e-05,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0007988004952177539,
+      "model": 3,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 32,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 88459,
+      "cpu_seconds": 0.142405791,
+      "diameter_m": 9.999999747378752e-05,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.004161042,
+      "diameter_m": 9.999999747378752e-05,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0008735312894626594,
+      "model": 3,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 1,
+      "ticks": 240,
+      "under": 63,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 22879,
+      "cpu_seconds": 0.036646833,
+      "diameter_m": 0.001500000013038516,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": false
+    },
+    {
+      "active": 55,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.022881042,
+      "diameter_m": 0.001500000013038516,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 5.074564779905785e-08,
+      "model": 3,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 9,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 24249,
+      "cpu_seconds": 0.042912125,
+      "diameter_m": 0.001500000013038516,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.004944542,
+      "diameter_m": 0.001500000013038516,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 5.0662103106521425e-08,
+      "model": 3,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 1,
+      "ticks": 240,
+      "under": 63,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 22879,
+      "cpu_seconds": 0.037053875,
+      "diameter_m": 0.001500000013038516,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": true
+    },
+    {
+      "active": 56,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.022890083,
+      "diameter_m": 0.001500000013038516,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0010147296910811548,
+      "model": 3,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 8,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 24249,
+      "cpu_seconds": 0.042372459,
+      "diameter_m": 0.001500000013038516,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.004490333,
+      "diameter_m": 0.001500000013038516,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0010131946447652803,
+      "model": 3,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 1,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 63,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 25609,
+      "cpu_seconds": 0.041421,
+      "diameter_m": 0.00279999990016222,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": false
+    },
+    {
+      "active": 64,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.025888375,
+      "diameter_m": 0.00279999990016222,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 5.0756397347217644e-08,
+      "model": 3,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 0,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 23654,
+      "cpu_seconds": 0.045714041,
+      "diameter_m": 0.00279999990016222,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.010557083,
+      "diameter_m": 0.00279999990016222,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 5.091712574203539e-08,
+      "model": 3,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 58,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 1,
+      "ticks": 240,
+      "under": 5,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 25609,
+      "cpu_seconds": 0.041894834,
+      "diameter_m": 0.00279999990016222,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": true
+    },
+    {
+      "active": 64,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.02636325,
+      "diameter_m": 0.00279999990016222,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0010149188450031723,
+      "model": 3,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 0,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 23654,
+      "cpu_seconds": 0.045611833,
+      "diameter_m": 0.00279999990016222,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.010756334,
+      "diameter_m": 0.00279999990016222,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.001013194640667558,
+      "model": 3,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 59,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 1,
+      "ticks": 240,
+      "under": 4,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 203181,
+      "cpu_seconds": 0.202324583,
+      "diameter_m": 0.0031999999191612005,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 64,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 0,
+      "weighted": false
+    },
+    {
+      "active": 64,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.025465,
+      "diameter_m": 0.0031999999191612005,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 5.0756397347217644e-08,
+      "model": 3,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 0,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 118305,
+      "cpu_seconds": 0.238931292,
+      "diameter_m": 0.0031999999191612005,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 64,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 0,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.010919333,
+      "diameter_m": 0.0031999999191612005,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 5.091712574199324e-08,
+      "model": 3,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 64,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 0,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 203181,
+      "cpu_seconds": 0.196929334,
+      "diameter_m": 0.0031999999191612005,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 64,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 0,
+      "weighted": true
+    },
+    {
+      "active": 64,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.025785542,
+      "diameter_m": 0.0031999999191612005,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0010149188450031723,
+      "model": 3,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 0,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 118305,
+      "cpu_seconds": 0.24027775,
+      "diameter_m": 0.0031999999191612005,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 64,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 0,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.010068792,
+      "diameter_m": 0.0031999999191612005,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.001013194640667558,
+      "model": 3,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 64,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 0,
+      "weighted": true
+    }
+  ],
+  "grading_candidate_model4": [
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 52524,
+      "cpu_seconds": 0.096642458,
+      "diameter_m": 9.999999747378752e-05,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.004582875,
+      "diameter_m": 9.999999747378752e-05,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 3.5285450448827094e-08,
+      "model": 4,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 88459,
+      "cpu_seconds": 0.160509625,
+      "diameter_m": 9.999999747378752e-05,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.004409542,
+      "diameter_m": 9.999999747378752e-05,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 4.008435797988312e-08,
+      "model": 4,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 52524,
+      "cpu_seconds": 0.0860355,
+      "diameter_m": 9.999999747378752e-05,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.004510209,
+      "diameter_m": 9.999999747378752e-05,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0008708571335338667,
+      "model": 4,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 1,
+      "ticks": 240,
+      "under": 63,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 88459,
+      "cpu_seconds": 0.152343416,
+      "diameter_m": 9.999999747378752e-05,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.004760334,
+      "diameter_m": 9.999999747378752e-05,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.000869701039338051,
+      "model": 4,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 1,
+      "ticks": 240,
+      "under": 63,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 22879,
+      "cpu_seconds": 0.038812,
+      "diameter_m": 0.001500000013038516,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.004779167,
+      "diameter_m": 0.001500000013038516,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 5.074492164875904e-08,
+      "model": 4,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 1,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 1,
+      "ticks": 240,
+      "under": 62,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 24249,
+      "cpu_seconds": 0.045309208,
+      "diameter_m": 0.001500000013038516,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.00491375,
+      "diameter_m": 0.001500000013038516,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 5.0659628027235926e-08,
+      "model": 4,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 1,
+      "ticks": 240,
+      "under": 63,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 22879,
+      "cpu_seconds": 0.039037834,
+      "diameter_m": 0.001500000013038516,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.004876625,
+      "diameter_m": 0.001500000013038516,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.001014789051660017,
+      "model": 4,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 1,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 1,
+      "ticks": 240,
+      "under": 62,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 24249,
+      "cpu_seconds": 0.045308083,
+      "diameter_m": 0.001500000013038516,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.00504025,
+      "diameter_m": 0.001500000013038516,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0010130535110296937,
+      "model": 4,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 1,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 1,
+      "ticks": 240,
+      "under": 62,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 25609,
+      "cpu_seconds": 0.044711791,
+      "diameter_m": 0.00279999990016222,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.006976375,
+      "diameter_m": 0.00279999990016222,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 5.091712176908683e-08,
+      "model": 4,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 59,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 2,
+      "ticks": 240,
+      "under": 3,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 23654,
+      "cpu_seconds": 0.048252,
+      "diameter_m": 0.00279999990016222,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.006780875,
+      "diameter_m": 0.00279999990016222,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 5.0756144133147016e-08,
+      "model": 4,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 50,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 11,
+      "ticks": 240,
+      "under": 3,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 25609,
+      "cpu_seconds": 0.043900625,
+      "diameter_m": 0.00279999990016222,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.007130125,
+      "diameter_m": 0.00279999990016222,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0010146127310207448,
+      "model": 4,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 59,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 2,
+      "ticks": 240,
+      "under": 3,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 23654,
+      "cpu_seconds": 0.046243667,
+      "diameter_m": 0.00279999990016222,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 0,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 64,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.007325,
+      "diameter_m": 0.00279999990016222,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.001013053500239762,
+      "model": 4,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 51,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 10,
+      "ticks": 240,
+      "under": 3,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 203181,
+      "cpu_seconds": 0.212374417,
+      "diameter_m": 0.0031999999191612005,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 64,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 0,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.0072745,
+      "diameter_m": 0.0031999999191612005,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 5.091712176908453e-08,
+      "model": 4,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 64,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 0,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 118305,
+      "cpu_seconds": 0.259144041,
+      "diameter_m": 0.0031999999191612005,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 64,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 0,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.006704208,
+      "diameter_m": 0.0031999999191612005,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 5.075614413314655e-08,
+      "model": 4,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 56,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 6.4000000000000035e-09,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 8,
+      "ticks": 240,
+      "under": 0,
+      "weighted": false
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 203181,
+      "cpu_seconds": 0.204074708,
+      "diameter_m": 0.0031999999191612005,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 64,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 0,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.007411083,
+      "diameter_m": 0.0031999999191612005,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0010146127310207446,
+      "model": 4,
+      "motor": false,
+      "physical_time_s": 4.000000208616257,
+      "reject": 64,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 0,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 118305,
+      "cpu_seconds": 0.245837083,
+      "diameter_m": 0.0031999999191612005,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0,
+      "model": 1,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 64,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 0,
+      "ticks": 240,
+      "under": 0,
+      "weighted": true
+    },
+    {
+      "active": 0,
+      "admitted": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "contacts": 0,
+      "cpu_seconds": 0.006699667,
+      "diameter_m": 0.0031999999191612005,
+      "failure": null,
+      "material_error_m3": 0.0,
+      "max_bed_depth_m": 0.0010130535002397618,
+      "model": 4,
+      "motor": true,
+      "physical_time_s": 4.000000208616257,
+      "reject": 55,
+      "retained": {
+        "gold_g": 0.0,
+        "gravel_m3": 0.00012799999999999983,
+        "pore_water_m3": 0.0,
+        "sand_m3": 0.0,
+        "soil_m3": 0.0
+      },
+      "spill": 9,
+      "ticks": 240,
+      "under": 0,
+      "weighted": true
+    }
+  ],
+  "legacy_exact_continuation": [
+    {
+      "model": 2,
+      "case": 0,
+      "exact": true,
+      "sha256": "da4ebd8b1c668d4467af3f48236c0a0ee523991b1df9ef74374c51e367cbe546",
+      "excluded": "Only newly explicit legacy contact configuration; every physical state, stock, spin, residence and clock retained."
+    },
+    {
+      "model": 2,
+      "case": 1,
+      "exact": true,
+      "sha256": "f980a77708a2b862ceacf44fa8406434aece85717854cba9dcb174042d3b6c3d",
+      "excluded": "Only newly explicit legacy contact configuration; every physical state, stock, spin, residence and clock retained."
+    },
+    {
+      "model": 2,
+      "case": 2,
+      "exact": true,
+      "sha256": "4e95135d63f1d2376ee9edb6ca6f70001d8272a86dee70a8af41cd25032ea102",
+      "excluded": "Only newly explicit legacy contact configuration; every physical state, stock, spin, residence and clock retained."
+    },
+    {
+      "model": 3,
+      "case": 0,
+      "exact": true,
+      "sha256": "1afbba204f967f95f88b0a8b72e177d271d8c023234d392dbdc4961279cd57e2",
+      "excluded": "Only newly explicit legacy contact configuration; every physical state, stock, spin, residence and clock retained."
+    },
+    {
+      "model": 3,
+      "case": 1,
+      "exact": true,
+      "sha256": "66480c6459c0fc8033bcc2b0647cd34e5777cd63989f6a3e3e1b9aba323fbc2a",
+      "excluded": "Only newly explicit legacy contact configuration; every physical state, stock, spin, residence and clock retained."
+    },
+    {
+      "model": 3,
+      "case": 2,
+      "exact": true,
+      "sha256": "44458e3e17c72957b80daf546c6000b278abed69065d844ba217815e66522be7",
+      "excluded": "Only newly explicit legacy contact configuration; every physical state, stock, spin, residence and clock retained."
+    }
+  ],
+  "followup": "menace-94n.1",
+  "pending_checks": [
+    "Execute current app unit tests (compile/lint passed; execution pending).",
+    "Execute actual original-wet-sluice/river/wet-stock Metal screen circuits with the new spin and saved model4.",
+    "Build native model4 and inspect running and stopped operation/finite transfers.",
+    "Measure loaded model4 FPS and physical/wall speed in a separate native window."
+  ],
+  "preview": {
+    "pid": 60781,
+    "executable": "/Users/simonheikkila/Documents/12-Coding/the-sluice-moose/target/playable/mining",
+    "sha256": "608b2a9a969b5755ee8daedbfdb5deb8ca41416e7476c7dda6a70756c44a0553",
+    "source_commit": "553b4ddd47ce7a033902d6cad82c4e27b375854c",
+    "mode": "validated experimental bulk model3; pending rolling model4 is not built into this executable",
+    "player_save": "/Users/simonheikkila/Library/Application Support/Sluice Moose/playtest-2026-10-29.json",
+    "log": "/Users/simonheikkila/.codex/visualizations/2026/10/18/01a14ce3-309f-7782-9a7c-ccd0efaf3227/screen-grading-20261028/interactive-preview-20261029.log",
+    "intentionally_left_running_for_user": true,
+    "launched_at": "2026-10-29T05:49:07.685145+00:00"
+  },
+  "preview_policy": "Keep the user-requested validated model3 process running; do not replace its executable or save, or start extra GPU/native workloads while it is in use. Small single-job CPU diagnostics and compile/lint checks only.",
+  "limits": [
+    "A spherical basal contact, not angular-grain shape, rolling resistance or packed contact calibration.",
+    "Mean-plane normal attachment and the vibration friction approximation remain; no resolved flight/contact-work audit.",
+    "Cohesive arrest/capillary drag remain assumed and require a torque/work calibration.",
+    "Near-aperture passage remains severely different from dilute detailed wires (2.8mm through3mm:3/64 vs64/64).",
+    "Moving oversize catch/spill differs and requires actual local bin/flight qualification.",
+    "No original wet-sluice/riffle, terrain flow or rendering source changes in this checkpoint.",
+    "All complete mine/construction/earthworks/mud/plant/pond/tailings/flood/failure/gameplay requirements remain open."
+  ],
+  "decision": "Preserved as an unadopted rolling-contact study after user requested performance, real DEM-style shaker movement and actual world tailings. Restore validated detailed-screen baseline for the next implementation; do not advance this mean-plane branch by default.",
+  "user_feedback": "performance, no actual tailings pile up; shaker deck should be more real DEM style and movement needs improvement",
+  "preview_state": "Closed normally by the user; final render drained, no new crash diagnostics."
+}

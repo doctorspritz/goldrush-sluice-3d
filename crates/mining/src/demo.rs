@@ -43,7 +43,7 @@ mod tests {
             let s = super::configured_session(true).unwrap();
             let p = s.plant.as_ref().unwrap();
             assert!(p.screen.motor_on && p.screen.bulk_deck().is_some());
-            assert_eq!(p.model_version, 3);
+            assert_eq!(p.model_version, 4);
             assert!(p.connected_to(&s.sluice));
             assert!(s.sluice.water.len() > 10000 && s.sluice.hopper.volume() > 0.4);
             assert!((s.accounted_gold() - s.initial_gold_g).abs() < 1e-7);

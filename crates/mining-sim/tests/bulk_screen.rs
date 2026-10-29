@@ -234,6 +234,83 @@ fn motor_stop_freezes_drive_but_does_not_freeze_gravity_or_duplicate_stock() {
     assert!(s.time > clock);
     budget(&s);
 }
+
+#[test]
+fn stopped_dry_bulk_sphere_rolls_with_spin_instead_of_false_static_clogging() {
+    use mining_sim::screen::BulkContact;
+    let mut modern = Screen::new(Vec3::ZERO, 0.);
+    let mut config = modern.config.clone();
+    config.length_m = 2.;
+    modern.set_config(config).unwrap();
+    modern.set_bulk_deck(Some(BulkDeck::default())).unwrap();
+    let mut legacy = modern.clone();
+    legacy
+        .set_bulk_deck(Some(BulkDeck {
+            contact: BulkContact::PointFrictionV1,
+            ..Default::default()
+        }))
+        .unwrap();
+    let input = grain(
+        &modern,
+        0,
+        0.006,
+        Material {
+            gravel_m3: 1e-10,
+            ..Default::default()
+        },
+    );
+    modern.admit(std::slice::from_ref(&input), 0.).unwrap();
+    legacy.admit(&[input], 0.).unwrap();
+    run(&mut modern, 60, 1. / 60.);
+    run(&mut legacy, 60, 1. / 60.);
+    let theta = modern.config.slope_deg.to_radians();
+    let tangent = modern.to_world(DVec3::new(theta.cos(), -theta.sin(), 0.));
+    let normal = modern.to_world(DVec3::new(theta.sin(), theta.cos(), 0.));
+    let p = &modern.particles[0];
+    let expected = tangent * (5. / 7. * 9.81 * theta.sin() * modern.elapsed_time_s);
+    assert!(
+        p.velocity.distance(expected) < 1e-8,
+        "actual {:?} expected {:?}",
+        p.velocity,
+        expected
+    );
+    assert!(
+        p.angular_velocity
+            .distance(normal.cross(expected) / (p.grain.diameter_m as f64 * 0.5))
+            < 1e-5
+    );
+    assert_eq!(p.grain.angular_velocity, p.angular_velocity.as_vec3());
+    assert!(!p.grain.resting);
+    assert_ne!(p.grain.rotation, Quat::IDENTITY);
+    assert!(legacy.particles[0].velocity.length() < 1e-12);
+    assert_eq!(legacy.particles[0].angular_velocity, DVec3::ZERO);
+    budget(&modern);
+    budget(&legacy);
+}
+#[test]
+fn saved_bulk_contact_laws_are_explicit_and_do_not_silently_migrate() {
+    use mining_sim::screen::{BulkContact, BulkProjection};
+    for (projection, version) in [("cell_bins_v1", 2), ("smooth_cells_v2", 3)] {
+        let json = serde_json::json!({"cells_downstream":16,"cells_across":4,"soil_yield_pa":25.,"projection":projection});
+        let config: BulkDeck = serde_json::from_value(json).unwrap();
+        assert_eq!(config.contact, BulkContact::PointFrictionV1);
+        let mut screen = Screen::new(Vec3::ZERO, 0.);
+        screen.set_bulk_deck(Some(config)).unwrap();
+        assert_eq!(screen.processing_model_version(), version);
+    }
+    let mut s = Screen::new(Vec3::ZERO, 0.);
+    s.set_bulk_deck(Some(BulkDeck::default())).unwrap();
+    assert_eq!(s.processing_model_version(), 4);
+    assert!(s
+        .set_bulk_deck(Some(BulkDeck {
+            projection: BulkProjection::CellBinsV1,
+            ..Default::default()
+        }))
+        .is_err());
+    let mut value = serde_json::to_value(BulkDeck::default()).unwrap();
+    value["contact"] = "unknown_contact_law".into();
+    assert!(serde_json::from_value::<BulkDeck>(value).is_err());
+}
 #[test]
 fn model_switch_and_invalid_state_refuse_atomically() {
     let mut s = screen(true, 4, 0.001, Material::default());
@@ -307,7 +384,7 @@ fn actual_dug_feed_bulk_screen_saved_plant_and_sluice_keep_finite_custody() {
     }
     assert_eq!(s.save_json().unwrap(), restored.save_json().unwrap());
     let p = s.plant.as_ref().unwrap();
-    assert_eq!(p.model_version, 3);
+    assert_eq!(p.model_version, 4);
     assert!(p.screen.delivered.mass_kg() > 0. && !s.sluice.grains.is_empty());
     assert!((s.accounted_material().volume() - baseline.volume()).abs() < 1e-7);
     assert!((s.accounted_gold() - s.initial_gold_g).abs() < 1e-7);
